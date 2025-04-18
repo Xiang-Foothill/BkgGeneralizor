@@ -12,7 +12,7 @@ from torchvision.models import resnet18, ResNet18_Weights
 from utils import pytorch_util as ptu
 from .base_model import BaseModel
 from .safeAC import Dynamics, SafeCritic, SafeAC
-
+import pathlib as Path
 from loguru import logger
 
 from utils.data_util import EfficientReplayBuffer, EfficientReplayBufferPN
@@ -74,8 +74,10 @@ class VisionSafeActor(BaseModel):
 class VisionSafeAC(SafeAC, nn.Module):
     def __init__(self, st_dim, ob_dim, ac_dim, n_layers, size, lr=1e-3, weight_decay=1e-5,
                  dyn_size=3, dyn_layers=64, critic_size=64, critic_layers=4,
-                 lam=1., ):
+                 lam=1.,):
+         
         super().__init__(st_dim=st_dim, ac_dim=ac_dim, n_layers=n_layers, size=size)
+
         self.dynamics = Dynamics(st_dim=st_dim, ac_dim=ac_dim, size=dyn_size, n_layers=dyn_layers,
                                  lr=lr, weight_decay=weight_decay)
         self.critic = SafeCritic(st_dim=st_dim, ac_dim=ac_dim, size=critic_size, n_layers=critic_layers,

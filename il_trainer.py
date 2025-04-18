@@ -386,6 +386,8 @@ class IL_Trainer_CARLA(ABC):
         fig.suptitle(f"{self.agent.model_name}_{self.comment} (Global Step: {global_step})")
 
         self.writer.add_figure(tag='val', figure=fig, global_step=global_step)
+
+        return completed_laps
     
     def training_loop(self, n_epochs: int):
         try:
@@ -492,6 +494,7 @@ class IL_Trainer_CARLA_SafeAC(IL_Trainer_CARLA):
         return traj_len
 
     def training_loop(self, n_epochs: int):
+        success_counts = 0 # number of evaluations that our agent meets the desired performance
         try:
             for global_step in range(self.starting_step, n_epochs):
                 logger.info(f"Epoch {global_step} / {n_epochs}")
@@ -507,7 +510,13 @@ class IL_Trainer_CARLA_SafeAC(IL_Trainer_CARLA):
                 if self.no_saving:
                     continue
                 if global_step % self.eval_freq == 0:
-                    self.evaluate_agent(global_step=global_step)
+                    completed_laps = self.evaluate_agent(global_step=global_step)
+                    success_counts = success_counts + 1 if completed_laps >= 5 else success_counts
+                    logger.info(f"successful evualtions by far: {success_counts}")
+
+                    if success_counts >= 3:
+                        logger.info("//////////////////////// convergence to successful behabior  ////////////////////// early stop triggered !!!!")
+                        break
                 self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
         finally:
             self.writer.flush()
@@ -629,8 +638,8 @@ if __name__ == '__main__':
                           )
 
     if params['evaluation']:
-        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data' / 'significant_checkpoints',
-                           name=EVAL_MODEL3)
+        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
+                           name=comment)
         trainer.evaluate_agent(global_step=0)
         # trainer.gnz_evaluation(max_laps = 5, global_iterations = 2)
     else:
