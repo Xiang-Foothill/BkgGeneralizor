@@ -81,6 +81,8 @@ class BaseModel(nn.Module):
         for epoch in range(n_epochs):
             self.train()
             for features, labels in train_loader:
+                #TO DO: add augmentation functions here to the feature class
+                
                 pred = self(*features)
                 loss, train_info = self.loss(pred, labels)
                 self.optimizer.zero_grad()
