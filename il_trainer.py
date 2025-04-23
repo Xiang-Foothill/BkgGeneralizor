@@ -638,8 +638,8 @@ if __name__ == '__main__':
                           )
 
     if params['evaluation']:
-        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
-                           name=comment)
+        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data /significant_checkpoints',
+                           name=EVAL_MODEL2)
         trainer.evaluate_agent(global_step=0)
         # trainer.gnz_evaluation(max_laps = 5, global_iterations = 2)
     else:

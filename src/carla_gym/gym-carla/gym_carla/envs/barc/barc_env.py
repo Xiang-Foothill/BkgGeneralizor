@@ -38,9 +38,7 @@ class BarcEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, track_name, t0=0., dt=0.1, dt_sim=0.01, max_n_laps=100,
-                 do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0,
-                 distort_space = ORIGINAL_MAIN["space"],
-                 stationary_d = ORIGINAL_MAIN["probs"]):
+                 do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0):
         self.track_obj = get_track(track_name)
         # self.track_obj.slack = 1
         self.t0 = t0  # Constant
@@ -53,9 +51,6 @@ class BarcEnv(gym.Env):
         self.host = host
         self.port = port
         self.weatherID = weatherID
-
-        self.distort_MC = continuous_MC(states = distort_space, pi = stationary_d)
-        self.cur_distort = original_image
 
         L = self.track_obj.track_length
         H = self.track_obj.half_width
@@ -254,7 +249,6 @@ class BarcEnv(gym.Env):
             truncated = True  # The control action may drive the vehicle out of the track during the internal steps. Process the exception here immediately.
 
         self.t += self.dt
-        self.cur_distort = self.distort_MC.update_chain(self.t)
         self._update_speed_stats()
 
         obs = self._get_obs()
@@ -293,7 +287,7 @@ class BarcEnv(gym.Env):
         if self.enable_camera:
             while True:
                 try:
-                    camera = self.camera_bridge.query_rgb(self.sim_state, self.cur_distort)
+                    camera, semantics = self.camera_bridge.query_rgb(self.sim_state)
                     break
                 except RuntimeError as e:
                     logger.error(e)
@@ -307,6 +301,7 @@ class BarcEnv(gym.Env):
                         logger.error(e)
             ob.update({
                 'camera': camera,
+                'semantics': semantics
                 # 'depth': None,
                 # 'imu': None,
             })

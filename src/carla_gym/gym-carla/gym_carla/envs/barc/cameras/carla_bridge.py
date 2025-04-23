@@ -16,7 +16,7 @@ import time
 import pygame
 import skimage
 from gym_carla.envs.barc.cameras.distortor import original_image
-
+SEMNATICS_SELECTED = [11]
 
 DEBUG = True
 WEATHER_DIC = np.asarray([
@@ -52,7 +52,9 @@ class CarlaConnector:
         self.obs_size = 224
         self.dt = 0.1
 
-        self.camera_img = np.empty((self.obs_size, self.obs_size, 3), dtype=np.uint8)
+        self.rgb_img = np.empty((self.obs_size, self.obs_size, 3), dtype=np.uint8)
+        self.semantic_mask = np.empty((self.obs_size, self.obs_size, 3), dtype=np.uint8)
+
         self.world = None
         self.camera_bp = None
         self.track_name = track_name
@@ -75,11 +77,11 @@ class CarlaConnector:
     
     @property
     def height(self):
-        return self.camera_img.shape[0]
+        return self.rgb_img.shape[0]
     
     @property
     def width(self):
-        return self.camera_img.shape[1]
+        return self.rgb_img.shape[1]
 
     def load_opendrive_map(self):
         xodr_path = Path(__file__).resolve().parents[1] / 'OpenDrive' / f"{self.track_name}.xodr"
@@ -126,52 +128,79 @@ class CarlaConnector:
     def destroy_camera(self):
         for actor in self.world.get_actors().filter('sensor.camera.rgb'):
             actor.destroy()
+        for actor in self.world.get_actors().filter('sensor.camera.semantic_segmentation'):
+            actor.destroy()
 
-    def spawn_camera(self, x=0., y=0., psi=0.):
+    def spawn_camera(self):
         # Remove any previous cameras.
         self.destroy_camera()
         # Next, try to spawn a camera at the origin.
-        self.camera_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
-        self.camera_bp.set_attribute('image_size_x', str(self.obs_size))
-        self.camera_bp.set_attribute('image_size_y', str(self.obs_size))
-        self.camera_bp.set_attribute('fov', '110')
-        # Set the time in seconds between sensor captures
-        self.camera_bp.set_attribute('sensor_tick', '0.02')
+        self.spawn_rgb_camera()
+        self.spawn_semantic_camera()
 
-        def get_camera_img(data):
+    def spawn_rgb_camera(self):
+        self.rgb_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
+        self.rgb_bp.set_attribute('image_size_x', str(self.obs_size))
+        self.rgb_bp.set_attribute('image_size_y', str(self.obs_size))
+        self.rgb_bp.set_attribute('fov', '110')
+        # Set the time in seconds between sensor captures
+        self.rgb_bp.set_attribute('sensor_tick', f"{self.dt}")
+
+        def get_rgb_img(data):
             array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
             array = np.reshape(array, (data.height, data.width, 4))
             array = array[:, :, :3]
             array = array[:, :, ::-1]
-            self.camera_img = array
+            self.rgb_img = array
 
-        self.camera_trans = carla.Transform(carla.Location(x=x, y=y, z=0.2),
-                                            carla.Rotation(yaw=-np.rad2deg(psi)))
-        self.camera_sensor = self.world.spawn_actor(self.camera_bp, self.camera_trans)
-        self.camera_sensor.listen(get_camera_img)
+        self.camera_trans = carla.Transform(carla.Location(x=0, y=0, z=0.2))
+        self.rgb_sensor = self.world.spawn_actor(self.rgb_bp, self.camera_trans)
+        self.rgb_sensor.listen(get_rgb_img)
     
-    def query_rgb(self, state, f_distort):
+    def spawn_semantic_camera(self):
+        self.semantic_bp = self.world.get_blueprint_library().find('sensor.camera.semantic_segmentation')
+        self.semantic_bp.set_attribute('image_size_x', str(self.obs_size))
+        self.semantic_bp.set_attribute('image_size_y', str(self.obs_size))
+        self.semantic_bp.set_attribute('fov', '110')
+        # Set the time in seconds between sensor captures
+        self.semantic_bp.set_attribute('sensor_tick', f"{self.dt}")
+
+        def mask_generator(data):
+            array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
+            array = np.reshape(array, (data.height, data.width, 4))
+            array = array[:, :, :3]
+            array = array[:, :, ::-1]
+
+            array = array.copy()
+            array.flags.writeable = True
+            array[:, :, 1] = array[:, :, 0]
+            array[:, :, 2] = array[:, :, 0]
+            semantic_tags = array
+
+            self.semantic_mask = np.logical_or.reduce([semantic_tags == semantic for semantic in SEMNATICS_SELECTED])
+
+        self.camera_trans = carla.Transform(carla.Location(x=0, y=0.01, z=0.2))
+        self.semantic_sensor = self.world.spawn_actor(self.semantic_bp, self.camera_trans)
+        self.semantic_sensor.listen(mask_generator)
+
+    def query_rgb(self, state):
         self.env_steps += 1
         if self.env_steps % 102_400 == 0:
             self.destroy_camera()
             self.load_opendrive_map()
             self.spawn_camera()
-        # if time.time() - self.last_check > self.check_freq:
-        #     self.last_check = time.time()
-        #     if self.client.get_world().get_map().name != 'Carla/Maps/OpenDriveMap':
-        #         self.load_opendrive_map()
-        #         self.spawn_camera()
-        self.camera_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x, y=-state.x.y, z=0.2), 
+        self.rgb_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x, y=-state.x.y, z=0.2), 
+                                                         carla.Rotation(yaw=-np.rad2deg(state.e.psi))))
+        self.semantic_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x, y=-state.x.y, z=0.2), 
                                                          carla.Rotation(yaw=-np.rad2deg(state.e.psi))))
         # attempt = 0
         # while True:
         #     try:
-        self.camera_img = f_distort(image = self.camera_img, state = state)
         self.world.tick()
         
         if DEBUG:
             # surface = rgb_to_display_surface(self.camera_img, 256)
-            pygame.surfarray.blit_array(self.surface, self.camera_img.swapaxes(0, 1))
+            pygame.surfarray.blit_array(self.surface, self.rgb_img.swapaxes(0, 1))
             self.display.blit(self.surface, (0, 0))
             pygame.display.flip()
             self.clock.tick(60)
@@ -180,7 +209,7 @@ class CarlaConnector:
             # self.fig.canvas.draw()
             # self.fig.canvas.flush_events()
             
-        return self.camera_img
+        return self.rgb_img, self.semantic_mask
         # except RuntimeError as e:
         #     logger.error(e)
         #     logger.error("Waiting for CARLA to restart...")
