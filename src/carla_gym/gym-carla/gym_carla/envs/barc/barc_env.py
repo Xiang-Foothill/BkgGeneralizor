@@ -110,6 +110,8 @@ class BarcEnv(gym.Env):
             observation_space.update(dict(
                 camera=spaces.Box(low=0, high=255, shape=(self.camera_bridge.height, self.camera_bridge.width, 3),
                                   dtype=np.uint8),
+                semantics=spaces.Box(low=0, high=255, shape=(self.camera_bridge.height, self.camera_bridge.width, 3),
+                                  dtype=np.uint8),
                 # depth=spaces.Box(low=0, high=255, shape=(3, H, W), dtype=np.uint8),
                 # imu=spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float64),
             ))

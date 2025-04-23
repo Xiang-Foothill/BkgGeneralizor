@@ -199,7 +199,7 @@ class CarlaConnector:
         self.world.tick()
         if DEBUG:
             # surface = rgb_to_display_surface(self.camera_img, 256)
-            display_image = self.rgb_img * self.semantic_mask
+            display_image = self.rgb_img * (1 - self.semantic_mask)
             pygame.surfarray.blit_array(self.surface, display_image.swapaxes(0, 1))
             self.display.blit(self.surface, (0, 0))
             pygame.display.flip()
