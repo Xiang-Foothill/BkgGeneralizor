@@ -39,7 +39,6 @@ class BarcEnv(gym.Env):
 
     def __init__(self, track_name, t0=0., dt=0.1, dt_sim=0.01, max_n_laps=100,
                  do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0):
-        logger.info("I am here")
         self.track_obj = get_track(track_name)
         # self.track_obj.slack = 1
         self.t0 = t0  # Constant
