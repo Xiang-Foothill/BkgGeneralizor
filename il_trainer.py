@@ -21,6 +21,7 @@ from src.carla_gym.controllers.barc_pid import PIDWrapper
 import models.feedforward
 from models import safeAC, visionSafeAC
 from models.base_model import BaseModel
+from domain_randomnization.randomnizor import BkgRandomnizer
 
 from utils import data_util
 from torch.utils.data import DataLoader
@@ -540,6 +541,80 @@ class IL_Trainer_CARLA_VisionSafeAC(IL_Trainer_CARLA_SafeAC):
         model_state_dict.update(filtered_state_dict)  # Update with the filtered keys
         self.agent.load_state_dict(model_state_dict, strict=False)  # Load updated state_dict
         self.agent.critic.initialized = True
+
+class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
+    def __init__(self, augment_percent = 0.5, **kwargs):
+        super.__init__(**kwargs)
+        self.randomnizor = BkgRandomnizer(augment_percent, )
+    
+    def sample_trajectory(self, beta: float, pbar: Optional['tqdm'] = None,
+                          max_traj_len=np.inf,
+                          PATIENCE=2, TRUNCATE=np.inf):
+        """
+
+        @param beta:
+        @param pbar:
+        @param max_traj_len:
+        @param PATIENCE: Maximum allowed consecutive expert fails before truncating the trajectory.
+        @param TRUNCATE: Number of examples to remove from the replay buffer if the trajectory is truncated.
+        @return:
+        """
+        ob, info = self.env.reset(options={'controller': self.expert})
+        self.agent.reset()
+        self.agent.eval()
+        self.expert.reset(options=info)
+        self.replay_buffer.clear_buffer()
+        terminated, truncated = False, False
+        traj_len = 0
+        fail_counter = 0
+
+        while not truncated:
+            ac = self.agent.get_action(*self.agent.parse_carla_obs(ob, info))
+            # expert_ac, expert_info = self.expert.step(state=info['vehicle_state'],
+            #                                           terminated=terminated,
+            #                                           lap_no=info['lap_no'])
+            expert_ac, expert_info = self.expert.step(**ob, **info)
+            expert_ac = np.clip(expert_ac, self.env.action_space.low, self.env.action_space.high)
+            closed_loop_action = beta * expert_ac + (1 - beta) * ac
+
+            # try:
+            if expert_info['success']:
+                # action = expert_ac if np.random.rand() <= beta else ac
+                # closed_loop_action = beta * expert_ac + (1 - beta) * ac
+                next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
+                # logger.debug(f"Action: {ac}, Expert action: {expert_ac}, v_long: {ob['state'][0]}")
+                # self.add_frame(ob=ob, ac_agent=ac, ac_expert=expert_ac, rew=rew, terminated=terminated,
+                #                truncated=truncated, info=info, next_ob=next_ob)
+                self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
+                                             action=expert_ac.astype(np.float32),
+                                             closed_loop_action=closed_loop_action.astype(np.float32),
+                                             next_state=next_ob['state'])
+                fail_counter = 0
+
+            else:
+                logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
+                next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
+                fail_counter += 1
+                self.replay_buffer.D_neg.add_frame(ob, rew, terminated, truncated, info,
+                                                   action=expert_ac.astype(np.float32),
+                                                   closed_loop_action=closed_loop_action.astype(np.float32),
+                                                   next_state=next_ob['state'])
+                if fail_counter >= PATIENCE:
+                    truncated = True  # NEW: Truncate the trajectory if expert fails for <PATIENCE> consecutive steps.
+                    # self.replay_buffer.popback(min(traj_len, TRUNCATE))
+
+            # except ValueError as e:  # Capture out-of-track errors from simulator step.
+            #     logger.warning(e)
+            #     truncated = True
+            #     break
+
+            traj_len += 1
+            ob = self.randomnizor.change_obs(next_ob)
+            if pbar is not None:
+                pbar.update(1)
+            if traj_len >= max_traj_len:
+                return traj_len
+        return traj_len
 
 if __name__ == '__main__':
     import argparse
