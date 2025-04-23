@@ -330,7 +330,7 @@ class IL_Trainer_CARLA(ABC):
             vs.append(np.linalg.norm(ob['state'][:2]))
             if self.do_relabel_with_expert:
                 expert_acs.append(expert_ac)
-
+            
             ob, rew, terminated, truncated, info = self.env.step(ac)
             rews += rew
             traj_len += 1
@@ -535,7 +535,6 @@ class IL_Trainer_CARLA_VisionSafeAC(IL_Trainer_CARLA_SafeAC):
 
         # print(checkpoint.keys())
         filtered_state_dict = {k: v for k, v in checkpoint.items() if ('critic' in k or 'dynamics' in k) and v.shape == model_state_dict[k].shape}
-        print(filtered_state_dict.keys())
 
         # Load only the matching weights
         model_state_dict.update(filtered_state_dict)  # Update with the filtered keys
@@ -638,7 +637,7 @@ if __name__ == '__main__':
                           )
 
     if params['evaluation']:
-        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data /significant_checkpoints',
+        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data/significant_checkpoints',
                            name=EVAL_MODEL2)
         trainer.evaluate_agent(global_step=0)
         # trainer.gnz_evaluation(max_laps = 5, global_iterations = 2)
