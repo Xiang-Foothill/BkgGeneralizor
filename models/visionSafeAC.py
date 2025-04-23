@@ -70,7 +70,6 @@ class VisionSafeActor(BaseModel):
         out = self.mlp(torch.cat([l, vel], dim=1))
         return (out,)
 
-
 class VisionSafeAC(SafeAC, nn.Module):
     def __init__(self, st_dim, ob_dim, ac_dim, n_layers, size, lr=1e-3, weight_decay=1e-5,
                  dyn_size=3, dyn_layers=64, critic_size=64, critic_layers=4,
