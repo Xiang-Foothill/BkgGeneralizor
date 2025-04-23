@@ -543,9 +543,47 @@ class IL_Trainer_CARLA_VisionSafeAC(IL_Trainer_CARLA_SafeAC):
         self.agent.critic.initialized = True
 
 class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
-    def __init__(self, augment_percent = 0.5, **kwargs):
-        super.__init__(**kwargs)
-        self.randomnizor = BkgRandomnizer(augment_percent, )
+    def __init__(self, carla_params,
+                       expert_cls,
+                       augment_percent=1.0,
+                       initial_traj_len=1024,
+                       eps_len=1024,
+                       replay_buffer_maxsize=65536,
+                       do_relabel_with_expert=True,
+                       n_training_per_epoch=1,
+                       comment='',
+                       no_saving=False,
+                       starting_step=0,
+                       eval_freq=1,
+                       batch_size=1,
+                       n_initial_training_epochs=5,
+                       beta=0.25,
+                       pretrain_critic=False,
+                       beta_decay_freq=5,
+                       **agent_params):
+        # Call the base class constructor
+        super().__init__(
+            carla_params=carla_params,
+            expert_cls=expert_cls,
+            initial_traj_len=initial_traj_len,
+            eps_len=eps_len,
+            replay_buffer_maxsize=replay_buffer_maxsize,
+            do_relabel_with_expert=do_relabel_with_expert,
+            n_training_per_epoch=n_training_per_epoch,
+            comment=comment,
+            no_saving=no_saving,
+            starting_step=starting_step,
+            eval_freq=eval_freq,
+            batch_size=batch_size,
+            n_initial_training_epochs=n_initial_training_epochs,
+            beta=beta,
+            pretrain_critic=pretrain_critic,
+            beta_decay_freq=beta_decay_freq,
+            **agent_params
+        )
+
+        # an extra parameter
+        self.randomnizor = BkgRandomnizer(augment_percent, debug = True)
     
     def sample_trajectory(self, beta: float, pbar: Optional['tqdm'] = None,
                           max_traj_len=np.inf,
@@ -609,7 +647,7 @@ class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
             #     break
 
             traj_len += 1
-            ob = self.randomnizor.change_obs(next_ob)
+            self.randomnizor.change_obs(next_ob)
             if pbar is not None:
                 pbar.update(1)
             if traj_len >= max_traj_len:
@@ -633,7 +671,7 @@ if __name__ == '__main__':
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--comment', '-m', type=str, default='')
     parser.add_argument('--eps_len', type=int, default=1024)
-    parser.add_argument('--randomnize', defualt = '', choices = ('', 'pure_augment'))
+    parser.add_argument('--randomnize', default = '', choices = ('', 'pure_augment'))
 
     parser.add_argument('--town', type=str, default=TOWN1)
     parser.add_argument('--host', type=str, default='localhost')
