@@ -633,6 +633,7 @@ if __name__ == '__main__':
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--comment', '-m', type=str, default='')
     parser.add_argument('--eps_len', type=int, default=1024)
+    parser.add_argument('--randomnize', defualt = '', choices = ('', 'pure_augment'))
 
     parser.add_argument('--town', type=str, default=TOWN1)
     parser.add_argument('--host', type=str, default='localhost')
@@ -688,7 +689,13 @@ if __name__ == '__main__':
 
     agent_params = config['model_hparams']
 
-    trainer_cls = IL_Trainer_CARLA_VisionSafeAC if params['observe'] == 'camera' else IL_Trainer_CARLA_SafeAC
+    if params['observe'] != 'camera':
+        trainer_cls = IL_Trainer_CARLA_SafeAC
+    else:
+        if params["randomnize"] == '':
+            trainer_cls = IL_Trainer_CARLA_VisionSafeAC
+        elif params["randomnize"] == "pure_augment":
+            trainer_cls = IL_Trainer_CARLA_VisionSafeAC_Augment
 
     trainer = trainer_cls(carla_params,
                           expert_cls=expert_mp[params['expert']],
