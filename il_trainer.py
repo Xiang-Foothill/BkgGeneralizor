@@ -30,6 +30,9 @@ from utils.logging.writer import MultiPurposeWriter
 from loguru import logger
 from labml import experiment
 
+"""GIT TOKEN:
+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"""
+
 EVAL_MODEL1 = "L_track_barc_v1.2.3-lam1_230"
 EVAL_MODEL2 = "L_track_barc_v1.4.2-lam1_57"
 EVAL_MODEL3 = "L_track_barc_v1.2.3-lam1"
