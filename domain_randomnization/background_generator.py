@@ -11,16 +11,23 @@ from loguru import logger
 device = "cuda"
 
 TOKEN = "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"
-DICT_PATH =  os.path.dirname(os.path.abspath(__file__)) + '\prompt_embeds_dict.pth'
+DICT_PATH =  os.path.dirname(os.path.abspath(__file__)) + '/prompt_embeds_dict.pth'
 BKG_PATH =  os.path.dirname(os.path.abspath(__file__)) + "/Bkgset.pth"
 DEVICE = "cuda"
 DISPLAY_NUM = 20 # number of generated images displayed
 DISPLAY_GEN = True # whether to display the generated images or not
-GEN_NUM = 50 # the number of images to be generated
+GEN_NUM = 100 # the number of images to be generated
 PROMPTS = [
-     "recursive fractal",
-    "chaotic fractal",
-    "symmetrical fractal",
+     'cloudy sky',
+    'raining sky',
+    'sunny sky',
+    'urban streets of modern cities',
+    "snow mountains",
+    "desert",
+    "dense forests",
+    "tropical forests",
+    "race-car stadium",
+    "rural farmland",
     ]
 
 """ Available text_prompts, choose from below as the text-prompt for image generation:

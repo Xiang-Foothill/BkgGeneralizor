@@ -545,7 +545,7 @@ class IL_Trainer_CARLA_VisionSafeAC(IL_Trainer_CARLA_SafeAC):
 class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
     def __init__(self, carla_params,
                        expert_cls,
-                       augment_percent=1.0,
+                       augment_percent=0.9,
                        initial_traj_len=1024,
                        eps_len=1024,
                        replay_buffer_maxsize=65536,
@@ -757,8 +757,8 @@ if __name__ == '__main__':
                           )
 
     if params['evaluation']:
-        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data/significant_checkpoints',
-                           name=EVAL_MODEL2)
+        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
+                           name=comment)
         trainer.evaluate_agent(global_step=0)
         # trainer.gnz_evaluation(max_laps = 5, global_iterations = 2)
     else:
