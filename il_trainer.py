@@ -495,7 +495,27 @@ class IL_Trainer_CARLA_SafeAC(IL_Trainer_CARLA):
         return traj_len
 
     def training_loop(self, n_epochs: int):
-        success_counts = 0 # number of evaluations that our agent meets the desired performance
+
+        def make_stop_flag(consecutive_steps = 3, success_laps = 10):
+            """early stop mechnism, if we have consecutive evaluations with 
+            completed laps larger than success_laps, the experiment is called to early stop,
+            i.e. the system is recognized to converge to stable behavior"""
+            history_eval = []
+            def f_stop_flag(completed_laps):
+                if completed_laps < success_laps:
+                    history_eval.clear()
+                else:
+                    history_eval.append(True)
+                
+                logger.info(f"number of consecutive successfull evaluations by far: {len(history_eval)}")
+                if len(history_eval) >= consecutive_steps:
+                    return True
+                else:
+                    return False
+            
+            return False, stop_flag
+            
+        stop_flag, f_stop_flag = make_stop_flag()
         try:
             for global_step in range(self.starting_step, n_epochs):
                 logger.info(f"Epoch {global_step} / {n_epochs}")
@@ -512,10 +532,9 @@ class IL_Trainer_CARLA_SafeAC(IL_Trainer_CARLA):
                     continue
                 if global_step % self.eval_freq == 0:
                     completed_laps = self.evaluate_agent(global_step=global_step)
-                    success_counts = success_counts + 1 if completed_laps >= 5 else success_counts
-                    logger.info(f"successful evualtions by far: {success_counts}")
+                    stop_flag = f_stop_flag(completed_laps)
 
-                    if success_counts >= 3:
+                    if stop_flag:
                         logger.info("//////////////////////// convergence to successful behabior  ////////////////////// early stop triggered !!!!")
                         break
                 self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
