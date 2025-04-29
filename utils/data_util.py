@@ -253,7 +253,7 @@ class EfficientReplayBuffer(Dataset, ABC):
         idx = (np.random.randint(0, self.size, traj_len) + self.left) % self.maxsize
         return {k: v[idx] for k, v in self.fields.items()}
 
-    def is_in_knn_convex_hull(self, query, fields, k: int, threshold=0.5):
+    def is_in_knn_convex_hull(self, query, fields, k: int, threshold=0.25): # original value of threshold = 0.5
         """
         The query must be batched, and have the same dimension as the corresponding field.
         """
@@ -381,7 +381,7 @@ class EfficientReplayBufferPN(EfficientReplayBuffer):
         self.D_pos.load(path=path, name=f"{name}_pos")
         self.D_neg.load(path=path, name=f"{name}_neg")
 
-    def preprocess(self, rho=1.):
+    def preprocess(self, rho=0.9): # original value of rho = 1.0
         self.buffer.clear()
         if not self.D_neg.initialized or len(self.D_neg) < 16:
             return

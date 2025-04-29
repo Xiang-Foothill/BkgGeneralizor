@@ -513,7 +513,7 @@ class IL_Trainer_CARLA_SafeAC(IL_Trainer_CARLA):
                 else:
                     return False
             
-            return False, stop_flag
+            return False, f_stop_flag
             
         stop_flag, f_stop_flag = make_stop_flag()
         try:
@@ -535,7 +535,7 @@ class IL_Trainer_CARLA_SafeAC(IL_Trainer_CARLA):
                     stop_flag = f_stop_flag(completed_laps)
 
                     if stop_flag:
-                        logger.info("//////////////////////// convergence to successful behabior  ////////////////////// early stop triggered !!!!")
+                        logger.info("//////////////////////// convergence to successful behavior  ////////////////////// early stop triggered !!!!")
                         break
                 self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
         finally:
@@ -564,7 +564,7 @@ class IL_Trainer_CARLA_VisionSafeAC(IL_Trainer_CARLA_SafeAC):
 class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
     def __init__(self, carla_params,
                        expert_cls,
-                       augment_percent=0.9,
+                       augment_percent=0.6,
                        initial_traj_len=1024,
                        eps_len=1024,
                        replay_buffer_maxsize=65536,
@@ -602,7 +602,7 @@ class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
         )
 
         # an extra parameter
-        self.randomnizor = BkgRandomnizer(augment_percent, debug = True)
+        self.randomnizor = BkgRandomnizer(augment_percent, debug = False) # set debug to false to speed up rendering
     
     def sample_trajectory(self, beta: float, pbar: Optional['tqdm'] = None,
                           max_traj_len=np.inf,
@@ -667,6 +667,8 @@ class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
 
             traj_len += 1
             self.randomnizor.change_obs(next_ob)
+            ob = next_ob
+
             if pbar is not None:
                 pbar.update(1)
             if traj_len >= max_traj_len:
@@ -677,12 +679,12 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--seed', type=int, default=38)
+    parser.add_argument('--seed', type=int, default=37) # original seed 38
     parser.add_argument('--n_epochs', type=int, default=500)
     parser.add_argument('--initial_traj_len', type=int, default=1024)
     parser.add_argument('--n_training_per_epoch', type=int, default=1)
     parser.add_argument('--n_initial_training_epochs', type=int, default=5)
-    parser.add_argument('--replay_buffer_maxsize', type=int, default=102_400)
+    parser.add_argument('--replay_buffer_maxsize', type=int, default= 51_200) # the original replay buffer maximum size: 102_400
     parser.add_argument('--expert', '-c', type=str, default='mpcc-conv',
                         choices=tuple(expert_mp.keys()))
     parser.add_argument('--observe', '-o', type=str, default='camera',

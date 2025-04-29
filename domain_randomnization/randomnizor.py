@@ -17,7 +17,7 @@ class BkgRandomnizer():
           
           try:
             self.bkgset = torch.load(self.bkgSet_path)
-            logger.info(f"//////////////////////////////////////////// The background set is loaded, it already has {self.bkgset[0].shape[0]} pictures //////////////////////////////")
+            logger.info(f"//////////////////////////////////////////// The background set is loaded, it already has {self.bkgset.shape[0]} pictures //////////////////////////////")
           except:
             logger.info(f"No bacground image set found in the directory {self.bkgSet_path}")
               
