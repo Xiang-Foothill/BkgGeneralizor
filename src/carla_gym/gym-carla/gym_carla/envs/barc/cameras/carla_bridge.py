@@ -16,7 +16,12 @@ import time
 import pygame
 import skimage
 from gym_carla.envs.barc.cameras.distortor import original_image
+import yaml
 SEMNATICS_SELECTED = [11]
+
+"""Listed below are available map names"""
+L_TRACK_BARC = "L_track_barc" # the original map without any additional features
+L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
 
 DEBUG = True
 WEATHER_DIC = np.asarray([
@@ -44,7 +49,7 @@ def rgb_to_display_surface(rgb, display_size):
 
 
 class CarlaConnector:
-    def __init__(self, track_name, host='localhost', port=2000, weatherID = 0):
+    def __init__(self, track_name, host='localhost', port=2000, weatherID = 0, map_name = L_TRACK_BARC):
         # self.client = carla.Client('localhost', 2000)
         self.client = carla.Client(host, port)
         self.client.set_timeout(10.0)
@@ -59,11 +64,13 @@ class CarlaConnector:
         self.camera_bp = None
         self.track_name = track_name
         self.track_obj = get_track(track_name)
+        self.map_name = map_name
 
-        self.load_opendrive_map()
+        self.load_map()
+        self.set_world()
+        self.shift_config()
+
         self.spawn_camera()
-        # self.last_check = time.time()
-        # self.check_freq = 10.
         self.env_steps = 0
         
         # Temporary: built-in rendering
@@ -82,7 +89,33 @@ class CarlaConnector:
     @property
     def width(self):
         return self.rgb_img.shape[1]
+    
+    def load_map(self):
+        if self.map_name == L_TRACK_BARC:
+            self.load_opendrive_map()
+        else:
+            self.world = self.client.load_world('/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1')
+    
+    def shift_config(self):
 
+        import os
+
+        current_dir = os.getcwd()
+        print("Current directory:", current_dir)
+
+        """sometimes, due to the inconsistency between carla import and opendrive xdor format
+        the origin point of the imported carla maps will shift, making the resulted coordinate system inconsistent with our mpc simulation"""
+        with open("src/carla_gym/config/map_config.yaml", "r") as file:
+            config_file = yaml.safe_load(file)
+        
+        if self.map_name == L_TRACK_BARC:
+            config_key = "L_track_barc"
+        elif self.map_name == L_TRACK_BARC1:
+            config_key = "L_track_barc1"
+
+        self.xshift = config_file[config_key]["xshift"]
+        self.yshift = config_file[config_key]["yshift"]
+        
     def load_opendrive_map(self):
         xodr_path = Path(__file__).resolve().parents[1] / 'OpenDrive' / f"{self.track_name}.xodr"
         if not os.path.exists(xodr_path):
@@ -101,16 +134,16 @@ class CarlaConnector:
         wall_height = 0.2      # in meters
         extra_width = 0.1       # in meters
         self.world = self.client.generate_opendrive_world(
-                        data, carla.OpendriveGenerationParameters(
-                            vertex_distance=vertex_distance,
-                            max_road_length=max_road_length,
-                            wall_height=wall_height,
-                            additional_width=extra_width,
-                            smooth_junctions=True,
+                          data, carla.OpendriveGenerationParameters(
+                              vertex_distance=vertex_distance,
+                              max_road_length=max_road_length,
+                              wall_height=wall_height,
+                              additional_width=extra_width,
+                              smooth_junctions=True,
                             enable_mesh_visibility=True))
-        spectator = self.world.get_spectator()
-        spectator.set_transform(carla.Transform(carla.Location(x=5, y=-5, z=10),
-                                                carla.Rotation(pitch=-45, yaw=-45)))
+        
+
+    def set_world(self):
         self.settings = self.world.get_settings()
         self.settings.synchronous_mode = True
         self.settings.fixed_delta_seconds = self.dt
@@ -189,8 +222,8 @@ class CarlaConnector:
             self.destroy_camera()
             self.load_opendrive_map()
             self.spawn_camera()
-        self.rgb_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x, y=-state.x.y, z=0.2), 
-                                                         carla.Rotation(yaw=-np.rad2deg(state.e.psi))))
+        self.rgb_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x + self.xshift, y=-state.x.y + self.yshift, z=0.2), 
+                                                         carla.Rotation(yaw=-np.rad2deg(state.e.psi)))) # remember to add a system transfer function
         self.semantic_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x, y=-state.x.y, z=0.2), 
                                                          carla.Rotation(yaw=-np.rad2deg(state.e.psi))))
         # attempt = 0

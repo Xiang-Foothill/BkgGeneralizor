@@ -35,9 +35,10 @@ EVAL_MODEL1 = "L_track_barc_v1.2.3-lam1_230"
 EVAL_MODEL2 = "L_track_barc_v1.4.2-lam1_57"
 EVAL_MODEL3 = "L_track_barc_v1.2.3-lam1"
 
-TOWN1 = 'L_track_barc'
-TOWN2 = 'L_track_barc_with_stop_sign'
-TOWN3 = 'L_track_barc_with_yield_sign'
+"""Listed below are available map names"""
+L_TRACK_BARC = "L_track_barc" # the original map without any additional features
+L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
+
 
 expert_mp = {
     'pid': PIDWrapper,
@@ -220,7 +221,7 @@ class IL_Trainer_CARLA(ABC):
         for mode, values in info.items():
             self.writer.do_logging(values, global_step=global_step, mode=mode)
     
-    def gnz_evaluation(self, global_iterations = 5, TOWN_LISTS = [TOWN2], WEATHER_IDs = [1, 2, 3, 4], max_laps = 20):
+    def gnz_evaluation(self, global_iterations = 5, TOWN_LISTS = [L_TRACK_BARC1], WEATHER_IDs = [1, 2, 3, 4], max_laps = 5):
 
         logger.info("Generalization evaluations starts")
 
@@ -228,7 +229,7 @@ class IL_Trainer_CARLA(ABC):
             self.agent.reset()
             self.agent.eval()
 
-            ob, info = self.env.reset(options={'controller': self.expert, 'spawning': 'fixed'}, track_name = cur_town, weatherID = cur_weather)
+            ob, info = self.env.reset(options={'controller': self.expert, 'spawning': 'fixed'}, map_name = cur_town, weatherID = cur_weather)
 
             truncated, terminated = False, False
             lap_times = []
@@ -268,17 +269,17 @@ class IL_Trainer_CARLA(ABC):
 
             return avg_lap_time, crashed_before_2, completed_laps
         
-        base_town, base_weather = TOWN1, 0
+        # base_town, base_weather = TOWN1, 0
 
         result = {}
-        result["base"] = dict(avg_lap_time = [], crashed_before_2 = [], completed_laps = [])
+        # result["base"] = dict(avg_lap_time = [], crashed_before_2 = [], completed_laps = [])
 
-        print("//////// baseline evaluation started ////////")
-        for i in range(global_iterations):
-            alt, c2, cl = one_iteration_test(base_town, base_weather, global_step = i)
-            result["base"]["avg_lap_time"].append(alt)
-            result["base"]["crashed_before_2"].append(c2)
-            result["base"]["completed_laps"].append(cl)
+        # print("//////// baseline evaluation started ////////")
+        # for i in range(global_iterations):
+        #     alt, c2, cl = one_iteration_test(base_town, base_weather, global_step = i)
+        #     result["base"]["avg_lap_time"].append(alt)
+        #     result["base"]["crashed_before_2"].append(c2)
+        #     result["base"]["completed_laps"].append(cl)
         
         print("///////// Generalization cases /////////////")
         for town in TOWN_LISTS:
@@ -694,7 +695,7 @@ if __name__ == '__main__':
     parser.add_argument('--eps_len', type=int, default=1024)
     parser.add_argument('--randomnize', default = '', choices = ('', 'pure_augment'))
 
-    parser.add_argument('--town', type=str, default=TOWN1)
+    parser.add_argument('--town', type=str, default='L_track_barc')
     parser.add_argument('--host', type=str, default='localhost')
     parser.add_argument('--port', type=int, default=2000)
     parser.add_argument('--dt', type=float, default=0.1)
@@ -711,6 +712,7 @@ if __name__ == '__main__':
     parser.add_argument('--pretrain_critic', action='store_true')
 
     parser.add_argument('--experimental', action='store_true')
+    parser.add_argument("--generalize_test", action = 'store_true')
     # parser.add_argument('--ntfy_freq', type=int, default=100)
 
     params = vars(parser.parse_args())
@@ -782,5 +784,11 @@ if __name__ == '__main__':
                            name=comment)
         trainer.evaluate_agent(global_step=0)
         # trainer.gnz_evaluation(max_laps = 5, global_iterations = 2)
+
+    elif params["generalize_test"]:
+        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
+                           name=comment)
+        trainer.gnz_evaluation()
+
     else:
         trainer.main(n_epochs=params['n_epochs'])

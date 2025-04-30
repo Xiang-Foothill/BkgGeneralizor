@@ -25,6 +25,10 @@ from mpclab_simulation.dynamics_simulator import DynamicsSimulator
 from gym_carla.envs.barc.cameras.distortor import original_image, motion_blur, gaussian_noise, overExposure
 from gym_carla.envs.barc.CTMC import continuous_MC
 
+"""Listed below are available map names"""
+L_TRACK_BARC = "L_track_barc" # the original map without any additional features
+L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
+
 ORIGINAL_MAIN = {"space" :  [original_image],
                  "probs": [1.0]}
 BLUR_MAIN = {"space" : [original_image, motion_blur, gaussian_noise, overExposure],
@@ -38,7 +42,7 @@ class BarcEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, track_name, t0=0., dt=0.1, dt_sim=0.01, max_n_laps=100,
-                 do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0):
+                 do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0, map_name = L_TRACK_BARC):
         self.track_obj = get_track(track_name)
         # self.track_obj.slack = 1
         self.t0 = t0  # Constant
@@ -51,6 +55,7 @@ class BarcEnv(gym.Env):
         self.host = host
         self.port = port
         self.weatherID = weatherID
+        self.map_name = map_name
 
         L = self.track_obj.track_length
         H = self.track_obj.half_width
@@ -85,7 +90,7 @@ class BarcEnv(gym.Env):
             from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
             from gym_carla.envs.barc.cameras.pixmix_camera import mixCamera
             from gym_carla.envs.barc.cameras.real_labler import BaseCamera
-            self.camera_bridge = CarlaConnector(self.track_name, host=self.host, port=self.port, weatherID = weatherID)
+            self.camera_bridge = CarlaConnector(self.track_name, host=self.host, port=self.port, weatherID = weatherID, map_name = self.map_name)
         else:
             self.camera_bridge = None
 
@@ -176,15 +181,15 @@ class BarcEnv(gym.Env):
             *,
             seed: Optional[int] = None,
             options: Optional[dict] = None,
-            track_name = None,
+            map_name = None,
             weatherID = None
     ) -> Tuple[ObsType, dict]:
         
-        if track_name != None or weatherID != None:
-            self.track_name = track_name
+        if map_name != None or weatherID != None:
+            self.map_name = map_name
             self.weatherID = weatherID
             from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
-            self.camera_bridge = CarlaConnector(self.track_name, host=self.host, port=self.port, weatherID = self.weatherID)
+            self.camera_bridge = CarlaConnector(self.track_name, host=self.host, port=self.port, weatherID = self.weatherID, map_name = self.map_name)
         
         if seed is not None:
             np.random.seed(seed)
