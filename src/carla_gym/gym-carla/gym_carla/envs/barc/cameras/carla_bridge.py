@@ -22,6 +22,7 @@ SEMNATICS_SELECTED = [11]
 """Listed below are available map names"""
 L_TRACK_BARC = "L_track_barc" # the original map without any additional features
 L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
+L_TRACK_BARC2 = '/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2'
 
 DEBUG = True
 WEATHER_DIC = np.asarray([
@@ -94,14 +95,10 @@ class CarlaConnector:
         if self.map_name == L_TRACK_BARC:
             self.load_opendrive_map()
         else:
-            self.world = self.client.load_world('/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1')
+            self.world = self.client.load_world(self.map_name)
     
     def shift_config(self):
 
-        import os
-
-        current_dir = os.getcwd()
-        print("Current directory:", current_dir)
 
         """sometimes, due to the inconsistency between carla import and opendrive xdor format
         the origin point of the imported carla maps will shift, making the resulted coordinate system inconsistent with our mpc simulation"""
@@ -112,6 +109,8 @@ class CarlaConnector:
             config_key = "L_track_barc"
         elif self.map_name == L_TRACK_BARC1:
             config_key = "L_track_barc1"
+        elif self.map_name == L_TRACK_BARC2:
+            config_key = "L_track_barc2"
 
         self.xshift = config_file[config_key]["xshift"]
         self.yshift = config_file[config_key]["yshift"]
@@ -131,7 +130,7 @@ class CarlaConnector:
         print('load opendrive map %r.' % os.path.basename(xodr_path))
         vertex_distance = 2.0  # in meters
         max_road_length = 0.1  # in meters
-        wall_height = 0.2      # in meters
+        wall_height = 0.01      # in meters
         extra_width = 0.1       # in meters
         self.world = self.client.generate_opendrive_world(
                           data, carla.OpendriveGenerationParameters(

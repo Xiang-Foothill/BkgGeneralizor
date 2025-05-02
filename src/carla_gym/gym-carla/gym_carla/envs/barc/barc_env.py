@@ -28,6 +28,7 @@ from gym_carla.envs.barc.CTMC import continuous_MC
 """Listed below are available map names"""
 L_TRACK_BARC = "L_track_barc" # the original map without any additional features
 L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
+L_TRACK_BARC2 = '/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2'
 
 ORIGINAL_MAIN = {"space" :  [original_image],
                  "probs": [1.0]}

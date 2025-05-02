@@ -27,6 +27,7 @@ from utils import data_util
 from torch.utils.data import DataLoader
 import utils.pytorch_util as ptu
 from utils.logging.writer import MultiPurposeWriter
+import pickle
 
 from loguru import logger
 from labml import experiment
@@ -38,7 +39,7 @@ EVAL_MODEL3 = "L_track_barc_v1.2.3-lam1"
 """Listed below are available map names"""
 L_TRACK_BARC = "L_track_barc" # the original map without any additional features
 L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
-
+L_TRACK_BARC2 = '/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2'
 
 expert_mp = {
     'pid': PIDWrapper,
@@ -143,6 +144,48 @@ class IL_Trainer_CARLA(ABC):
 
     def pretrain_critic(self):
         return
+    
+    def data_collect(self, save_path = "obs_data.pkl", max_steps = 300, PATIENCE = 2, interested_fields = ["camera", "semantics"]):
+        """collect carla images for offline testing"""
+        res = {}
+        for field in interested_fields:
+            res[field] = []
+
+        ob, info = self.env.reset(options={'controller': self.expert})
+        self.agent.reset()
+        self.agent.eval()
+        self.expert.reset(options=info)
+        self.replay_buffer.clear_buffer()
+        terminated, truncated = False, False
+        step = 0
+
+        while not truncated and step < max_steps:
+
+            expert_ac, expert_info = self.expert.step(**ob, **info)
+            expert_ac = np.clip(expert_ac, self.env.action_space.low, self.env.action_space.high)
+
+            if expert_info['success']:
+                next_ob, rew, terminated, truncated, info = self.env.step(expert_ac)
+
+            else:
+                logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
+                next_ob, rew, terminated, truncated, info = self.env.step(expert_ac)
+                fail_counter += 1
+                if fail_counter >= PATIENCE:
+                    truncated = True  
+            step += 1
+            ob = next_ob
+
+            for field in interested_fields:
+                res[field].append(ob[field])
+        
+        for field in interested_fields:
+            res[field] = np.asarray(res[field])
+        
+        with open(save_path, "wb") as f:
+            pickle.dump(res, f)
+
+        return res
 
     def sample_trajectory(self, beta: float, pbar: Optional['tqdm'] = None,
                           max_traj_len=np.inf,
@@ -221,7 +264,7 @@ class IL_Trainer_CARLA(ABC):
         for mode, values in info.items():
             self.writer.do_logging(values, global_step=global_step, mode=mode)
     
-    def gnz_evaluation(self, global_iterations = 5, TOWN_LISTS = [L_TRACK_BARC1], WEATHER_IDs = [1, 2, 3, 4], max_laps = 5):
+    def gnz_evaluation(self, global_iterations = 3, TOWN_LISTS = [L_TRACK_BARC2], WEATHER_IDs = [0, 1, 2], max_laps = 5):
 
         logger.info("Generalization evaluations starts")
 
@@ -256,16 +299,16 @@ class IL_Trainer_CARLA(ABC):
             std_lap_time = np.std(lap_times[1:]) if len(lap_times) > 1 else np.nan
             crashed_before_2 = 1 if completed_laps <= 2 else 0
 
-            # Below are logging-related actions.
-            if global_step % 10 == 0:
-                self.writer.do_logging({
-            'Traj Len': traj_len,
-            'sum_reward': rews,
-            'fastest_lap': fastest_lap,
-            'avg_lap_time': avg_lap_time,
-            'std_lap_time': std_lap_time,
-            'completed_laps': completed_laps,
-            }, global_step=global_step, mode='val')
+            # # Below are logging-related actions.
+            # if global_step % 10 == 0:
+            #     self.writer.do_logging({
+            # 'Traj Len': traj_len,
+            # 'sum_reward': rews,
+            # 'fastest_lap': fastest_lap,
+            # 'avg_lap_time': avg_lap_time,
+            # 'std_lap_time': std_lap_time,
+            # 'completed_laps': completed_laps,
+            # }, global_step=global_step, mode='val')
 
             return avg_lap_time, crashed_before_2, completed_laps
         
@@ -603,7 +646,7 @@ class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
         )
 
         # an extra parameter
-        self.randomnizor = BkgRandomnizer(augment_percent, debug = False) # set debug to false to speed up rendering
+        self.randomnizor = BkgRandomnizer(augment_percent, debug = True) # set debug to false to speed up rendering
     
     def sample_trajectory(self, beta: float, pbar: Optional['tqdm'] = None,
                           max_traj_len=np.inf,
@@ -800,6 +843,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--experimental', action='store_true')
     parser.add_argument("--generalize_test", action = 'store_true')
+    parser.add_argument("--data_collect", action = 'store_true')
     # parser.add_argument('--ntfy_freq', type=int, default=100)
 
     params = vars(parser.parse_args())
@@ -878,6 +922,9 @@ if __name__ == '__main__':
         trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
                            name=comment)
         trainer.gnz_evaluation()
+    
+    elif params["data_collect"]:
+        trainer.data_collect()
 
     else:
         trainer.main(n_epochs=params['n_epochs'])
