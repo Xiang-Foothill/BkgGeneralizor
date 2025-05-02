@@ -676,6 +676,93 @@ class IL_Trainer_CARLA_VisionSafeAC_Augment(IL_Trainer_CARLA_VisionSafeAC):
                 return traj_len
         return traj_len
 
+class IL_Trainer_CARLA_VisionSafeAC_randomFetch(IL_Trainer_CARLA_VisionSafeAC):
+    def __init__(self, carla_params,
+                       expert_cls,
+                       augment_percent=0.6,
+                       initial_traj_len=1024,
+                       eps_len=1024,
+                       replay_buffer_maxsize=65536,
+                       do_relabel_with_expert=True,
+                       n_training_per_epoch=1,
+                       comment='',
+                       no_saving=False,
+                       starting_step=0,
+                       eval_freq=1,
+                       batch_size=1,
+                       n_initial_training_epochs=5,
+                       beta=0.25,
+                       pretrain_critic=False,
+                       beta_decay_freq=5,
+                       **agent_params):
+        """
+
+        @param expert: A wrapper designed for CARLA. Must have a step function that accepts a single frame of
+        observation from gym_carla, and returns a 1d numpy array of expert action.
+        The expert must be deterministic.
+        @param carla_params:
+        @param initial_traj_len:
+        @param replay_buffer_maxsize:
+        @param do_relabel_with_expert:
+        @param n_training_per_epoch:
+        @param comment:
+        @param no_saving:
+        @param starting_step:
+        @param eval_freq:
+        @param batch_size:
+        @param n_initial_training_epochs:
+        @param agent_params:
+        """
+        self.best_avg_lap_time = np.inf
+        self.beta_decay_freq = beta_decay_freq
+        self.eval_freq = eval_freq
+        self.comment = comment
+        self.initial_traj_len = initial_traj_len
+        self.do_relabel_with_expert = do_relabel_with_expert
+        self.n_training_per_epoch = n_training_per_epoch
+        self.batch_size = batch_size
+        self.no_saving = no_saving
+        self.n_initial_training_epochs = n_initial_training_epochs
+        self.beta = beta
+        # self.use_labml_tracker = use_labml_tracker
+        self.agent_params = agent_params
+
+        self.n_eval_success, self.n_eval_total = 0, 0
+        self.eval_rewards_last10 = deque(maxlen=10)
+
+        self.update_carla_params(carla_params)
+        self.env = gym.make('barc-v0', **carla_params)
+        self.eps_len = min(replay_buffer_maxsize, eps_len)
+
+        self.expert = expert_cls(dt=carla_params['dt'], t0=carla_params['t0'], track_obj=self.env.get_track())
+        self.agent: 'BaseModel' = None
+        self.initialize_agent(comment=comment, **agent_params)
+
+        # an extra parameter
+        self.randomnizor = BkgRandomnizer(augment_percent, debug = True) # set debug to false to speed up rendering
+
+        self.replay_buffer: 'data_util.EfficientReplayBuffer' = None
+        self.replay_buffer = data_util.EfficientReplayBufferPN_random(randomnizer= self.randomnizor, maxsize=replay_buffer_maxsize,
+                                                               lazy_init=True,
+                                                               )
+
+        self.writer: 'MultiPurposeWriter' = MultiPurposeWriter(model_name=self.agent.model_name,
+                                                               log_dir=f"logs/{self.agent.model_name}_{comment or ''}",
+                                                               comment=comment or '',
+                                                               print_method=logger.info,
+                                                               # use_labml_tracker=use_labml_tracker,
+                                                               # ntfy_freq=ntfy_freq,
+                                                               )
+
+        # Load previous model weights and replay buffer.
+        self.starting_step = starting_step
+        self.agent.to(ptu.device)
+        if starting_step > 0:
+            self.agent.load()
+            self.replay_buffer.load()
+        if pretrain_critic:
+            self.pretrain_critic()
+
 if __name__ == '__main__':
     import argparse
 
@@ -693,7 +780,7 @@ if __name__ == '__main__':
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--comment', '-m', type=str, default='')
     parser.add_argument('--eps_len', type=int, default=1024)
-    parser.add_argument('--randomnize', default = '', choices = ('', 'pure_augment'))
+    parser.add_argument('--randomnize', default = '', choices = ('', 'pure_augment', "random_fetch"))
 
     parser.add_argument('--town', type=str, default='L_track_barc')
     parser.add_argument('--host', type=str, default='localhost')
@@ -757,6 +844,8 @@ if __name__ == '__main__':
             trainer_cls = IL_Trainer_CARLA_VisionSafeAC
         elif params["randomnize"] == "pure_augment":
             trainer_cls = IL_Trainer_CARLA_VisionSafeAC_Augment
+        elif params["randomnize"] == "random_fetch":
+            trainer_cls = IL_Trainer_CARLA_VisionSafeAC_randomFetch
 
     trainer = trainer_cls(carla_params,
                           expert_cls=expert_mp[params['expert']],

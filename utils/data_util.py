@@ -391,6 +391,34 @@ class EfficientReplayBufferPN(EfficientReplayBuffer):
         logger.debug(f"Ditched {np.sum(mask)} examples from D_neg. {len(self.D_neg)} left uncertain. {len(self.D_pos)} known safe.")
         return projected_safe
 
+class EfficientReplayBufferPN_random(EfficientReplayBufferPN):
+    def __init__(self, randomnizer, maxsize: int = 1_000_000, transform=None, random_eviction: bool = True,
+                 lazy_init=True):
+        self.D_pos = EfficientReplayBuffer(maxsize=maxsize, transform=transform, random_eviction=random_eviction,
+                                           constants={'safe': np.array([1.], dtype=np.float32)},
+                                           lazy_init=lazy_init, name='D_pos')
+        self.D_neg = EfficientReplayBuffer(maxsize=maxsize, transform=transform, random_eviction=random_eviction,
+                                           constants={'safe': np.array([0.1], dtype=np.float32)},
+                                           lazy_init=lazy_init, name='D_neg')
+        self.buffer = EfficientReplayBuffer(maxsize=2048, random_eviction=False, lazy_init=lazy_init)
+
+        self.transform["camera"] = randomnizer.randomnize
+    
+    def _fetch(self, index):
+        """Note: index is the absolute index in the arrays. """
+        data = {}
+        extracted = {}
+        for k in self.fields.keys():
+            extracted[k] = self.fields[k][index]
+
+        for k in self.fields.keys():
+            if k in self.transform:
+                data[k] = self.transform[k](extracted)
+            else:
+                data[k] = self.fields[k][index]
+
+        return {**data, **self.constants}
+
 
 class EfficientReplayBufferPN_nopreprocess(EfficientReplayBufferPN):
     def preprocess(self):
