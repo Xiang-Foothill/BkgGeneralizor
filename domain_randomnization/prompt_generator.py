@@ -31,7 +31,6 @@ class prompt_genrator():
         text_encoder = T5EncoderModel.from_pretrained(
             "DeepFloyd/IF-I-L-v1.0",
             subfolder="text_encoder",
-            load_in_8bit=True,
             variant="8bit",
             )
         self.text_pipe = DiffusionPipeline.from_pretrained(
@@ -39,7 +38,6 @@ class prompt_genrator():
             text_encoder=text_encoder,  # pass the previously instantiated text encoder
             unet=None
             )
-        # self.text_pipe.to(DEVICE)
 
         try:
             self.prompt_embeds_dict = torch.load(self.path)
