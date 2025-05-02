@@ -4,6 +4,7 @@ from loguru import logger
 import os
 import torch
 from PIL import Image
+import time
 
 BKGSET_PATH = os.path.dirname(os.path.abspath(__file__)) + "/Bkgset.pth"
 
@@ -28,7 +29,7 @@ class BkgRandomnizer():
             self.display_frame = self.ax.imshow(np.zeros((64, 64, 3), dtype=np.uint8))
             plt.show()
 
-    def randomnize(self, input_image, input_mask):
+    def bkg_randomnize(self, input_image, input_mask):
         setSize = self.bkgset.shape[0]
         idx = np.random.randint(low = 0, high = setSize)
 
@@ -41,14 +42,32 @@ class BkgRandomnizer():
 
         return input_image * (1 - input_mask) + bkg * input_mask
     
+    def randomnize(self, data):
+        """
+        The interface to the fetch function of the data_loader
+        put all the available randomnize functions here
+        @ data: a dictionary for set of data retrieved from the replay_buffer
+        @ return: an augmented RGB image"""
+        augmented = self.bkg_randomnize(data["camera"], data["semantics"])
+
+        if self.debug:
+            self.display_frame.set_data(augmented)  # <- update image data
+            time.pause(0.5)
+            
+            self.fig.canvas.draw()
+            self.fig.canvas.flush_events()
+
+        return augmented
+
+
     def null_randomnize(self, input_image, input_mask):
         """a null function used to test the interface"""
-
         return input_image * (1 - input_mask)
 
     def change_obs(self, obs):
+        """the interface to the BARC_ENV, it will change the observation from the environment directly"""
         if np.random.uniform(low = 0.0, high = 1.0) <= self.transfer_percentage:
-              obs[self.write_field] = self.randomnize(input_image = obs["camera"], input_mask = obs["semantics"])
+              obs[self.write_field] = self.bkg_randomnize(input_image = obs["camera"], input_mask = obs["semantics"])
         
         if self.debug:
             self.display_frame.set_data(obs[self.write_field])  # <- update image data
