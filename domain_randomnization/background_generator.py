@@ -78,8 +78,19 @@ class bkgGenerator():
 
         # Load the T5 text encoder (this may take a while)
         # stage 1
-        self.model = DiffusionPipeline.from_pretrained("DeepFloyd/IF-I-M-v1.0", variant="fp16", torch_dtype=torch.float16, text_encoder = None)
-        self.model.to(DEVICE)
+        self.stage1 = DiffusionPipeline.from_pretrained(
+            "DeepFloyd/IF-I-L-v1.0", variant="fp16", 
+            torch_dtype=torch.float16, text_encoder = None)
+        self.stage1.to(DEVICE)
+
+        # Load DeepFloyd IF stage II
+        self.stage2 = DiffusionPipeline.from_pretrained(
+                "DeepFloyd/IF-II-L-v1.0",
+                text_encoder=None,
+                variant="fp16",
+                torch_dtype=torch.float16,
+              )
+        self.stage2.to(DEVICE)
 
         try:
             self.prompt_embeds_dict = torch.load(self.dictionary_path)
@@ -118,7 +129,8 @@ class bkgGenerator():
             return prompt_embeds, negative_prompt_embeds
         
         prompt_embeds, negative_embeds = generate_embeds()
-        images = self.model(prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_embeds, output_type="pt", num_inference_steps=20).images
+        stage1_output = self.stage1(prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_embeds, output_type="pt", num_inference_steps=20).images
+        images = self.stage2(image = stage1_output, prompt_embeds=prompt_embeds, negative_prompt_embeds=negative_embeds, output_type="pt", num_inference_steps=20).images
         add_set = (((images.permute(0, 2, 3, 1).cpu().detach().numpy()) / 2.0 + 0.5) * 255.0).astype(np.uint8)
 
         if display_generated:
