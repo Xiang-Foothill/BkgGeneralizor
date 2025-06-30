@@ -29,6 +29,7 @@ from gym_carla.envs.barc.CTMC import continuous_MC
 L_TRACK_BARC = "L_track_barc" # the original map without any additional features
 L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
 L_TRACK_BARC2 = '/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2'
+FOREST_SIM_TRACK1 = '/Game/forest_sim_track1/Maps/forsest_sim_track1/forsest_sim_track1'
 
 ORIGINAL_MAIN = {"space" :  [original_image],
                  "probs": [1.0]}
@@ -39,12 +40,15 @@ GAUSSIAN_MAIN = {"space" : [original_image, motion_blur, gaussian_noise, overExp
 EXPOSURE_MAIN = {"space" : [original_image, motion_blur, gaussian_noise, overExposure],
                  "probs" : [0.5, 0.0005, 0.005, 0.49]}
 
+TRACK_NAME_SET = {'L_track_barc', 'sim_track1'}
+
 class BarcEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, track_name, t0=0., dt=0.1, dt_sim=0.01, max_n_laps=100,
-                 do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0, map_name = L_TRACK_BARC):
-        self.track_obj = get_track(track_name)
+                 do_render=False, enable_camera=True, host='localhost', port=2000, weatherID = 0, map_name =L_TRACK_BARC):
+        self.track_name = None
+        self.update_track(map_name, with_dynamics = False)
         # self.track_obj.slack = 1
         self.t0 = t0  # Constant
         self.dt = dt
@@ -62,7 +66,7 @@ class BarcEnv(gym.Env):
         H = self.track_obj.half_width
         VL = 0.37
         VW = 0.195
-        sim_dynamics_config = DynamicBicycleConfig(dt=dt_sim,
+        self.sim_dynamics_config = DynamicBicycleConfig(dt=dt_sim,
                                                    model_name='dynamic_bicycle',
                                                    noise=False,
                                                    discretization_method='rk4',
@@ -86,7 +90,7 @@ class BarcEnv(gym.Env):
                                                    pacejka_c_front=2.28,
                                                    pacejka_c_rear=2.28)
         # dynamics_simulator = DynamicsSimulator(t, sim_dynamics_config, delay=[0.1, 0.1], track=track_obj)
-        self.dynamics_simulator = DynamicsSimulator(t0, sim_dynamics_config, delay=None, track=self.track_obj)
+        self.dynamics_simulator = DynamicsSimulator(t0, self.sim_dynamics_config, delay=None, track=self.track_obj)
         if enable_camera:
             from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
             from gym_carla.envs.barc.cameras.pixmix_camera import mixCamera
@@ -108,6 +112,7 @@ class BarcEnv(gym.Env):
             gps=spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
             velocity=spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
             state=spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32),
+            curvature = spaces.Box(low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32),
         )
         if self.enable_camera:
             from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
@@ -115,8 +120,8 @@ class BarcEnv(gym.Env):
             observation_space.update(dict(
                 camera=spaces.Box(low=0, high=255, shape=(self.camera_bridge.height, self.camera_bridge.width, 3),
                                   dtype=np.uint8),
-                semantics=spaces.Box(low=0, high=255, shape=(self.camera_bridge.height, self.camera_bridge.width, 3),
-                                  dtype=np.uint8),
+                # semantics=spaces.Box(low=0, high=255, shape=(self.camera_bridge.height, self.camera_bridge.width, 3),
+                #                   dtype=np.uint8),
                 # depth=spaces.Box(low=0, high=255, shape=(3, H, W), dtype=np.uint8),
                 # imu=spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float64),
             ))
@@ -129,6 +134,23 @@ class BarcEnv(gym.Env):
 
         self.t = None
         self.max_lap_speed = self.min_lap_speed = self._sum_lap_speed = self.eps_len = 0
+    
+    def update_track(self, map_name, with_dynamics = False):
+        last_segment = map_name.strip().split('/')[-1]
+        new_track_name = None
+        for track_name in TRACK_NAME_SET:
+            if track_name in last_segment:
+                new_track_name = track_name
+                break
+        
+        if self.track_name != new_track_name:
+            self.track_name = new_track_name
+            logger.info(f"the track name updated based on the passed in map_name [{new_track_name}]")
+            self.track_obj = get_track(self.track_name)
+
+            if with_dynamics:
+                logger.info("the dynamic simulator is updated")
+                self.dynamics_simulator = DynamicsSimulator(0.0, self.sim_dynamics_config, delay=None, track=self.track_obj)
 
     def get_track(self):
         return self.track_obj
@@ -186,12 +208,16 @@ class BarcEnv(gym.Env):
             weatherID = None
     ) -> Tuple[ObsType, dict]:
         
-        if map_name != None or weatherID != None:
+        if (map_name != self.map_name and map_name is not None) or (weatherID != self.weatherID and weatherID is not None):
             self.map_name = map_name
             self.weatherID = weatherID
+                
             from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
-            self.camera_bridge = CarlaConnector(self.track_name, host=self.host, port=self.port, weatherID = self.weatherID, map_name = self.map_name)
+
+            self.camera_bridge.reset(weatherID = self.weatherID, map_name = self.map_name)
         
+        # self.update_track(self.map_name, with_dynamics = True)
+
         if seed is not None:
             np.random.seed(seed)
         if (options is not None and options.get('render')) or self.do_render:
@@ -209,8 +235,8 @@ class BarcEnv(gym.Env):
             self.sim_state = VehicleState(t=0.0,
                                           p=ParametricPose(s=np.random.uniform(0.1, self.track_obj.track_length - 2),
                                                            x_tran=np.random.uniform(
-                                                               -self.track_obj.half_width - self.track_obj.slack,
-                                                               self.track_obj.half_width + self.track_obj.slack),
+                                                               -self.track_obj.half_width / 2,
+                                                               self.track_obj.half_width / 2),
                                                            e_psi=np.random.uniform(-np.pi / 6, np.pi / 6), ),
                                           # e=OrientationEuler(psi=0),
                                           v=BodyLinearVelocity(v_long=np.random.uniform(0.5, 2), v_tran=0),
@@ -227,6 +253,17 @@ class BarcEnv(gym.Env):
         self.eps_len = 1
 
         return self._get_obs(), self._get_info()
+    
+    def curvature_in_horizon(self, state : VehicleState, ds : float = 0.08, point_num : int = 3):
+        init_s = state.p.s
+
+        res = []
+        for k in range(point_num):
+            cur_s = init_s + k * ds
+            curvature = self.track_obj.get_curvature(cur_s)
+            res.append(curvature)
+        
+        return np.asarray(res, dtype = np.float32)
 
     def _update_speed_stats(self):
         v = np.linalg.norm([self.sim_state.v.v_long, self.sim_state.v.v_tran])
@@ -282,6 +319,34 @@ class BarcEnv(gym.Env):
             return
         self.visualizer.step(self.sim_state)
 
+    def get_random_obs(self) -> Dict[str, np.ndarray]:
+        random_state = VehicleState(t=0.0,
+                                          p=ParametricPose(s=np.random.uniform(0.1, self.track_obj.track_length - 1),
+                                                           x_tran=np.random.uniform(
+                                                               -self.track_obj.half_width / 1.2,
+                                                               self.track_obj.half_width / 1.2),
+                                                           e_psi=np.random.uniform(-np.pi / 6, np.pi / 6), ),
+                                          # e=OrientationEuler(psi=0),
+                                          v=BodyLinearVelocity(v_long=np.random.uniform(0.5, 2), v_tran=0),
+                                          w=BodyAngularVelocity(w_psi=0))
+        self.track_obj.local_to_global_typed(random_state)
+
+        ob = {
+            'gps': np.array([random_state.x.x, random_state.x.y, random_state.e.psi], dtype=np.float32),
+            'velocity': np.array([random_state.v.v_long, random_state.v.v_tran, random_state.w.w_psi],
+                                 dtype=np.float32),
+            'state': np.array([random_state.v.v_long, random_state.v.v_tran, random_state.w.w_psi,
+                               random_state.p.s, random_state.p.x_tran, random_state.p.e_psi], dtype=np.float32),
+            'curvature': self.curvature_in_horizon(random_state),
+        }
+
+        if self.enable_camera:
+            camera, semantics = self.camera_bridge.query_rgb(random_state)
+            ob.update({
+                'camera': camera,
+            })
+        return ob
+
     def _get_obs(self) -> Dict[str, np.ndarray]:
         ob = {
             'gps': np.array([self.sim_state.x.x, self.sim_state.x.y, self.sim_state.e.psi], dtype=np.float32),
@@ -289,29 +354,17 @@ class BarcEnv(gym.Env):
                                  dtype=np.float32),
             'state': np.array([self.sim_state.v.v_long, self.sim_state.v.v_tran, self.sim_state.w.w_psi,
                                self.sim_state.p.s, self.sim_state.p.x_tran, self.sim_state.p.e_psi], dtype=np.float32),
+            'curvature': self.curvature_in_horizon(state = self.sim_state),
             # self.sim_state.x.x, self.sim_state.x.y, self.sim_state.e.psi], dtype=np.float32),
             # For backward compatibility.
         }
+
+        # logger.info(f"x_tran = {self.sim_state.p.x_tran}, e_psi = {self.sim_state.p.e_psi}")
+
         if self.enable_camera:
-            while True:
-                try:
-                    camera, semantics = self.camera_bridge.query_rgb(self.sim_state)
-                    break
-                except RuntimeError as e:
-                    logger.error(e)
-                from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
-                while True:
-                    time.sleep(10)
-                    try:
-                        self.camera_bridge = CarlaConnector(self.track_name, self.host, self.port)
-                        break
-                    except RuntimeError as e:
-                        logger.error(e)
+            camera, semantics = self.camera_bridge.query_rgb(self.sim_state)
             ob.update({
                 'camera': camera,
-                'semantics': semantics
-                # 'depth': None,
-                # 'imu': None,
             })
         return ob
 

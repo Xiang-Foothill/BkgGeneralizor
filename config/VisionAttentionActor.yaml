@@ -1,0 +1,11 @@
+model_hparams:
+    ac_dim: 2
+    ob_dim: 3
+
+    n_layers: 2
+    size: 5
+    l_dim: 8
+
+    lr: !!float 1e-3
+    weight_decay: !!float 1e-4
+    lam: !!float 1.

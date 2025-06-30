@@ -73,6 +73,29 @@ def generate_LTrack_barc():
     print('Generated L_track_barc')
     return
 
+def generate_sim_track1():
+    track_width = 1.1
+    slack = 0.3
+
+    cl_segs = np.array([[8.0,               0],
+                        [np.pi / 2 * 1.5,   -1.5],
+                        [5.0,               0],
+                        [np.pi / 2 * 2,     2.0],
+                        [5.0,               0.0],
+                        [np.pi * 2,         - 2.0],
+                        [7.0,               0.0],
+                        [np.pi * 1.5,       1.5],
+                        [3.0,               0.0],
+                        [np.pi * 1.5,       - 1.5],
+                        [12.5,               0.0],
+                        [np.pi / 2 * 1.5,    - 1.5],
+                        [15.5,               0.0],
+                        [np.pi / 2 * 1.5,    -1.5]])
+    
+    generate_curvature_and_path_length_track('sim_track1', track_width, cl_segs, slack)
+    print("Generated sim_track1")
+    return
+
 def generate_LTrack_barc_reverse():
     track_width = 1.1
     slack     = 0.3
@@ -386,14 +409,15 @@ def normsort(xycoords):
 
 def main():
     # generate_straight_track()
-    generate_LTrack_barc()
-    generate_LTrack_barc_reverse()
+    # generate_LTrack_barc()
+    # generate_LTrack_barc_reverse()
     # generate_Lab_track()
     # generate_Circle_track()
     # generate_Oval_track()
     # generate_Indy_track()
-    generate_f1_austin_track()
+    # generate_f1_austin_track()
     # generate_Monza_track()
+    generate_sim_track1()
 
 if __name__ == '__main__':
     main()

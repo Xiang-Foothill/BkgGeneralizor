@@ -17,20 +17,28 @@ import pygame
 import skimage
 from gym_carla.envs.barc.cameras.distortor import original_image
 import yaml
-SEMNATICS_SELECTED = [11]
+from gym_carla.envs.barc.barc_env import TRACK_NAME_SET
 
+SEMNATICS_SELECTED = [11]
+import gc
 """Listed below are available map names"""
 L_TRACK_BARC = "L_track_barc" # the original map without any additional features
 L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
 L_TRACK_BARC2 = '/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2'
+L_TRACK_BARC4 = '/Game/L_track_barc4/Maps/L_track_barc4/L_track_barc4'
+L_TRACK_BARC5 = '/Game/L_track_barc5/Maps/L_track_barc5/L_track_barc5'
+L_TRACK_BARC6 = '/Game/L_track_barc6/Maps/L_track_barc6/L_track_barc6'
+FOREST_SIM_TRACK1 = '/Game/forest_sim_track1/Maps/forsest_sim_track1/forsest_sim_track1'
 
 DEBUG = True
 WEATHER_DIC = np.asarray([
     [0.0, 0.0, 90.0, 0.0],
     [80.0, 0.0, 90.0, 0.0],
     [0.0, 80.0, 90.0, 0.0],
-    [0.0, 0.0, 30.0, 0.0],
-    [0.0, 0.0, 90.0, 100.0]
+    [0.0, 0.0, 3.0, 0.0],
+    [0.0, 0.0, 5.0, 0.0],
+    [0.0, 0.0, 0.5, 0.0],
+    [0.0, 0.0, 1.0, 0.0]
 ]
 )
 
@@ -54,6 +62,7 @@ class CarlaConnector:
         # self.client = carla.Client('localhost', 2000)
         self.client = carla.Client(host, port)
         self.client.set_timeout(10.0)
+        logger.debug(f"available maps: {self.client.get_available_maps()}")
         self.weatherID = weatherID
         self.obs_size = 224
         self.dt = 0.1
@@ -70,6 +79,7 @@ class CarlaConnector:
         self.load_map()
         self.set_world()
         self.shift_config()
+        self.sensor_list = []
 
         self.spawn_camera()
         self.env_steps = 0
@@ -91,6 +101,21 @@ class CarlaConnector:
     def width(self):
         return self.rgb_img.shape[1]
     
+    def reset(self, map_name, weatherID):
+        self.destroy_camera()
+        del self.world
+        gc.collect()
+
+        self.weatherID = weatherID
+        self.map_name = map_name
+
+        self.load_map()
+        self.set_world()
+        self.shift_config()
+
+        self.spawn_camera()
+        self.env_steps = 0
+
     def load_map(self):
         if self.map_name == L_TRACK_BARC:
             self.load_opendrive_map()
@@ -99,18 +124,18 @@ class CarlaConnector:
     
     def shift_config(self):
 
+        last_segment = self.map_name.strip().split('/')[-1]
+        config_key = L_TRACK_BARC
 
+        for track_name in TRACK_NAME_SET:
+            if track_name in last_segment:
+                config_key = track_name
+                break
+        
         """sometimes, due to the inconsistency between carla import and opendrive xdor format
         the origin point of the imported carla maps will shift, making the resulted coordinate system inconsistent with our mpc simulation"""
         with open("src/carla_gym/config/map_config.yaml", "r") as file:
             config_file = yaml.safe_load(file)
-        
-        if self.map_name == L_TRACK_BARC:
-            config_key = "L_track_barc"
-        elif self.map_name == L_TRACK_BARC1:
-            config_key = "L_track_barc1"
-        elif self.map_name == L_TRACK_BARC2:
-            config_key = "L_track_barc2"
 
         self.xshift = config_file[config_key]["xshift"]
         self.yshift = config_file[config_key]["yshift"]
@@ -158,17 +183,24 @@ class CarlaConnector:
             self.world.set_weather(weather)
 
     def destroy_camera(self):
-        for actor in self.world.get_actors().filter('sensor.camera.rgb'):
-            actor.destroy()
-        for actor in self.world.get_actors().filter('sensor.camera.semantic_segmentation'):
-            actor.destroy()
+        for sensor in self.sensor_list:
+            sensor.stop()
+            sensor.destroy()
+            gc.collect()
+            # logger.info(f"Sensor {sensor.id} type: {sensor.type_id} is destroyed")
+        self.sensor_list = []
 
     def spawn_camera(self):
-        # Remove any previous cameras.
-        self.destroy_camera()
         # Next, try to spawn a camera at the origin.
         self.spawn_rgb_camera()
         self.spawn_semantic_camera()
+    
+    def get_rgb_img(self, data):
+            array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
+            array = np.reshape(array, (data.height, data.width, 4))
+            array = array[:, :, :3]
+            array = array[:, :, ::-1]
+            self.rgb_img = array
 
     def spawn_rgb_camera(self):
         self.rgb_bp = self.world.get_blueprint_library().find('sensor.camera.rgb')
@@ -178,26 +210,14 @@ class CarlaConnector:
         # Set the time in seconds between sensor captures
         self.rgb_bp.set_attribute('sensor_tick', f"{self.dt}")
 
-        def get_rgb_img(data):
-            array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
-            array = np.reshape(array, (data.height, data.width, 4))
-            array = array[:, :, :3]
-            array = array[:, :, ::-1]
-            self.rgb_img = array
-
         self.camera_trans = carla.Transform(carla.Location(x=0, y=0, z=0.2))
         self.rgb_sensor = self.world.spawn_actor(self.rgb_bp, self.camera_trans)
-        self.rgb_sensor.listen(get_rgb_img)
-    
-    def spawn_semantic_camera(self):
-        self.semantic_bp = self.world.get_blueprint_library().find('sensor.camera.semantic_segmentation')
-        self.semantic_bp.set_attribute('image_size_x', str(self.obs_size))
-        self.semantic_bp.set_attribute('image_size_y', str(self.obs_size))
-        self.semantic_bp.set_attribute('fov', '110')
-        # Set the time in seconds between sensor captures
-        self.semantic_bp.set_attribute('sensor_tick', f"{self.dt}")
+        self.rgb_sensor.set_simulate_physics(False)
+        self.rgb_sensor.listen(self.get_rgb_img)
+        self.sensor_list.append(self.rgb_sensor)
+        time.sleep(0.5)
 
-        def mask_generator(data):
+    def mask_generator(self, data):
             array = np.frombuffer(data.raw_data, dtype=np.dtype("uint8"))
             array = np.reshape(array, (data.height, data.width, 4))
             array = array[:, :, :3]
@@ -210,17 +230,24 @@ class CarlaConnector:
             semantic_tags = array
 
             self.semantic_mask = np.logical_or.reduce([semantic_tags == semantic for semantic in SEMNATICS_SELECTED])
+    
+    def spawn_semantic_camera(self):
+        self.semantic_bp = self.world.get_blueprint_library().find('sensor.camera.semantic_segmentation')
+        self.semantic_bp.set_attribute('image_size_x', str(self.obs_size))
+        self.semantic_bp.set_attribute('image_size_y', str(self.obs_size))
+        self.semantic_bp.set_attribute('fov', '110')
+        # Set the time in seconds between sensor captures
+        self.semantic_bp.set_attribute('sensor_tick', f"{self.dt}")
 
         self.camera_trans = carla.Transform(carla.Location(x=0, y=0.01, z=0.2))
         self.semantic_sensor = self.world.spawn_actor(self.semantic_bp, self.camera_trans)
-        self.semantic_sensor.listen(mask_generator)
+        self.semantic_sensor.set_simulate_physics(False)
+        self.semantic_sensor.listen(self.mask_generator)
+        self.sensor_list.append(self.semantic_sensor)
+        time.sleep(0.5)
 
     def query_rgb(self, state):
         self.env_steps += 1
-        if self.env_steps % 102_400 == 0:
-            self.destroy_camera()
-            self.load_opendrive_map()
-            self.spawn_camera()
         self.rgb_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x + self.xshift, y=-state.x.y + self.yshift, z=0.2), 
                                                          carla.Rotation(yaw=-np.rad2deg(state.e.psi)))) # remember to add a system transfer function
         self.semantic_sensor.set_transform(carla.Transform(carla.Location(x=state.x.x, y=-state.x.y, z=0.2), 
@@ -228,6 +255,10 @@ class CarlaConnector:
         # attempt = 0
         # while True:
         #     try:
+        for sensor in self.sensor_list:
+            if not sensor.is_listening():
+                logger.info("sensor is not listening")
+
         self.world.tick()
         if DEBUG:
             # surface = rgb_to_display_surface(self.camera_img, 256)

@@ -118,7 +118,6 @@ def generate_LTrack_barc_xodr():
 
     print("XODR file created: L_track_barc.xodr")
 
-
 def generate_xodr_from_arc_length_track_data(track_name):
     from mpclab_common.track import get_track
     track_obj = get_track(track_name)
@@ -137,4 +136,4 @@ def generate_xodr_from_arc_length_track_data(track_name):
 
 if __name__ == '__main__':
     # generate_LTrack_barc_xodr()
-    generate_xodr_from_arc_length_track_data("L_track_barc")
+    generate_xodr_from_arc_length_track_data("sim_track1")

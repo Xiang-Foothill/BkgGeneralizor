@@ -66,11 +66,11 @@ class BaseModel(nn.Module):
     def loss(self, pred, label) -> Tuple[torch.Tensor, Dict[str, float]]:
         raise NotImplementedError
 
-    def fit(self, train_dataset: 'EfficientReplayBuffer', n_epochs, val_dataset=None):
+    def fit(self, train_dataset: 'EfficientReplayBuffer', n_epochs, val_dataset=None, global_step = None):
         train_examples, train_loss = 0, 0.
         val_examples, val_loss = 0, 0.
 
-        train_loader = train_dataset.dataloader(batch_size=64, shuffle=True, num_workers=0,
+        train_loader = train_dataset.dataloader(batch_size=16, shuffle=True, num_workers=0,
                                                 manifest=[self.feature_fields, self.label_fields])
         val_loader = val_dataset.dataloader(batch_size=64, shuffle=False, num_workers=0,
                                             manifest=[self.feature_fields,
@@ -93,8 +93,10 @@ class BaseModel(nn.Module):
                 train_examples += 1
                 for k, v in train_info.items():
                     train_scores[k] += v
+
             if val_loader is None:
                 continue
+
             self.eval()
             with torch.no_grad():
                 for features, labels in val_loader:
@@ -109,6 +111,10 @@ class BaseModel(nn.Module):
             'train': {f'{self.model_name}_loss': train_loss / train_examples,
                       **{f'{self.model_name}_{k}': v / train_examples for k, v in train_scores.items()}}
         }
+
+        for k, v in train_scores.items():
+            logger.info(f"{k} = {v / train_examples}")
+
         if val_loader is not None:
             info['val'] = {f'{self.model_name}_loss': val_loss / val_examples,
                            **{f'{self.model_name}_{k}': v / val_examples for k, v in val_scores.items()}}
@@ -125,4 +131,4 @@ class BaseModel(nn.Module):
             logger.warning('Weight files not found.')
             return
         self.load_state_dict(torch.load(file_path, weights_only=True, map_location=ptu.device))
-        logger.info(f"Weights loaded successfully from {os.path.join(path, name)}!")
+        logger.info(f"Weights loaded successfully from {file_path}!")

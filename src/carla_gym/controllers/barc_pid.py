@@ -19,6 +19,7 @@ class PIDWrapper:
         # Input type: ndarray, local frame
         self.pid_controller = None
         self.t = None
+        self.VW = VW
 
         self.dt = dt
         self.noise = noise
@@ -37,7 +38,7 @@ class PIDWrapper:
                                                pacejka_b_rear=5.0,
                                                pacejka_c_front=2.28,
                                                pacejka_c_rear=2.28,
-                                               code_gen=True,
+                                               code_gen=False,
                                                jit=True,
                                                opt_flag='O3')
         self.dyn_model = CasadiDynamicCLBicycle(t0, dynamics_config, track=track_obj)
@@ -58,6 +59,7 @@ class PIDWrapper:
         )
         self.prediction = VehiclePrediction()
         self.safe_set = VehiclePrediction()
+        self.setup_pid_controller()
 
     def setup_pid_controller(self):
         pid_steer_params = PIDParams(dt=self.dt,
@@ -88,10 +90,43 @@ class PIDWrapper:
         _state.p.s = np.mod(_state.p.s, self.track_obj.track_length)
         return {'success': True, 'status': 0}  # PID controller never fails.
 
-    def reset(self, *, seed=None, options=None):
-        self.setup_pid_controller()
+    def reset(self, *, seed=None, options=None, track_obj=None):
         self.t = self.t0
+        if self.track_obj is not track_obj and track_obj is not None:
+            raise TypeError("You cannot change the track_obj at the middle of the training !")
+            self.track_ob = track_obj
+            dynamics_config = DynamicBicycleConfig(dt=self.dt,
+                                               model_name='dynamic_bicycle_cl',
+                                               noise=False,
+                                               discretization_method='rk4',
+                                               simple_slip=False,
+                                               tire_model='pacejka',
+                                               mass=2.2187,
+                                               yaw_inertia=0.02723,
+                                               wheel_friction=0.9,
+                                               pacejka_b_front=5.0,
+                                               pacejka_b_rear=5.0,
+                                               pacejka_c_front=2.28,
+                                               pacejka_c_rear=2.28,
+                                               code_gen=False,
+                                               jit=True,
+                                               opt_flag='O3')
+            self.dyn_model = CasadiDynamicCLBicycle(self.t0, dynamics_config, track=track_obj)
 
+            self.state_input_ub = VehicleState(p=ParametricPose(s=2 * self.track_obj.track_length, x_tran=self.track_obj.half_width - self.VW / 2, e_psi=100),
+                                           v=BodyLinearVelocity(v_long=10, v_tran=10),
+                                           w=BodyAngularVelocity(w_psi=10),
+                                           u=VehicleActuation(u_a=2.0, u_steer=0.436))
+            self.state_input_lb = VehicleState(p=ParametricPose(s=-2 * self.track_obj.track_length, x_tran=-(self.track_obj.half_width - self.VW / 2), e_psi=-100),
+                                           v=BodyLinearVelocity(v_long=-10, v_tran=-10),
+                                           w=BodyAngularVelocity(w_psi=-10),
+                                           u=VehicleActuation(u_a=-2.0, u_steer=-0.436))
+            self.input_rate_ub = VehicleState(u=VehicleActuation(u_a=20.0, u_steer=4.5))
+            self.input_rate_lb = VehicleState(u=VehicleActuation(u_a=-20.0, u_steer=-4.5))
+            logger.info("The expert controller is updated based on the input track")
+        
+        self.setup_pid_controller()
+        
     def step(self, vehicle_state, terminated, lap_no, **kwargs):
         """
         Use VehicleState to step directly. Closer to how the simulation script works.
