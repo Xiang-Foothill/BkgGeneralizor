@@ -187,7 +187,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         if pretrain_critic:
             self.pretrain_critic()
         
-        self.domain_list = [DOMAIN5, DOMAIN6] # the training-time available domains
+        self.domain_list = [DOMAIN7, DOMAIN8] # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
 
         # the list used to store evaluation result
@@ -273,7 +273,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
 
         while traj_len < max_traj_len:
 
-            self.label_domain(ob)
+            self.label_domain(ob, domain)
             ac = self.agent.get_action(*self.agent.parse_carla_obs(ob, info))
             # expert_ac, expert_info = self.expert.step(state=info['vehicle_state'],
             #                                           terminated=terminated,
@@ -323,10 +323,89 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
 
         return traj_len
     
+    def sample_trajectory_with_near_future(self, domain, beta: float, pbar: Optional['tqdm'] = None,max_traj_len=np.inf,
+                          PATIENCE=2, TRUNCATE=np.inf):
+        """
+
+        @param beta:
+        @param pbar:
+        @param max_traj_len:
+        @param PATIENCE: Maximum allowed consecutive expert fails before truncating the trajectory.
+        @param TRUNCATE: Number of examples to remove from the replay buffer if the trajectory is truncated.
+        @return:
+        """
+        cur_map = domain["map_name"]
+        weatherID = domain["weatherID"]
+
+        ob, info = self.env.reset(options={}, map_name = cur_map, weatherID = weatherID)
+
+        self.agent.reset()
+        self.agent.eval()
+        self.expert.reset(options=info)
+        # self.replay_buffer.clear_buffer() # note that the replay buffer is EfficientReplayBuffer instead of EffieicentReplayBufferPN
+        terminated, truncated = False, False
+        traj_len = 0
+        fail_counter = 0
+
+        while traj_len < max_traj_len:
+
+            self.label_domain(ob, domain)
+            ac = self.agent.get_action(*self.agent.parse_carla_obs(ob, info))
+            # expert_ac, expert_info = self.expert.step(state=info['vehicle_state'],
+            #                                           terminated=terminated,
+            #                                           lap_no=info['lap_no'])
+            expert_ac, expert_info = self.expert.step(**ob, **info)
+            expert_ac = np.clip(expert_ac, self.env.action_space.low, self.env.action_space.high)
+            closed_loop_action = beta * expert_ac + (1 - beta) * ac
+
+            # try:
+            if expert_info['success']:
+                # action = expert_ac if np.random.rand() <= beta else ac
+                # closed_loop_action = beta * expert_ac + (1 - beta) * ac
+                next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
+                # logger.debug(f"Action: {ac}, Expert action: {expert_ac}, v_long: {ob['state'][0]}")
+                # self.add_frame(ob=ob, ac_agent=ac, ac_expert=expert_ac, rew=rew, terminated=terminated,
+                #                truncated=truncated, info=info, next_ob=next_ob)
+                self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
+                                             action=expert_ac.astype(np.float32),
+                                             closed_loop_action=closed_loop_action.astype(np.float32),
+                                             next_state=next_ob['state'],
+                                             next_camera=next_ob['camera'].copy())
+                fail_counter = 0
+
+            else:
+                logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
+                next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
+                fail_counter += 1
+                self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
+                                                   action=expert_ac.astype(np.float32),
+                                                   closed_loop_action=closed_loop_action.astype(np.float32),
+                                                   next_state=next_ob['state'],
+                                                   next_camera=next_ob['camera'].copy())
+                if fail_counter >= PATIENCE:
+                    truncated = True
+
+            traj_len += 1
+            ob = next_ob
+
+            if pbar is not None:
+                pbar.update(1)
+            
+            if truncated: # reset the environment if the vehicle is truncated
+                logger.info(f"the vehicle is truncated, now respawning")
+                ob, info = self.env.reset(options={'controller': self.expert})
+                self.agent.reset()
+                self.agent.eval()
+                self.expert.reset(options=info)
+                terminated, truncated = False, False
+
+        return traj_len
+    
     def sample_trajectory_with_future(self, domain, beta: float, pbar: Optional['tqdm'] = None,
                           max_traj_len=np.inf,
                           PATIENCE=2, TRUNCATE=np.inf):
         
+        """To be debugged"""
         cur_map = domain["map_name"]
         weatherID = domain["weatherID"]
 
@@ -377,10 +456,8 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
             if pbar is not None:
                 pbar.update(1)
 
-            if truncated:
+            if truncated: # reset the environment if the vehicle is truncated
                 logger.info(f"the vehicle is truncated, now respawning")
-                break  # exit collection loop
-
         # Post-processing: add camera_t_1 and camera_t_4
         for t in range(len(trajectory)):
             t1 = min(t + 1, len(trajectory) - 1)
@@ -402,8 +479,59 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 camera_t_1=frame['camera_t_1'],
                 camera_t_4=frame['camera_t_4'],
             )
+        self.display_random_camera_frame_from_buffer()
 
         return traj_len
+
+    def display_camera_batch_with_actions(self, batch_size=8, seed=None):
+        import random
+        import matplotlib.pyplot as plt
+        """
+        Randomly samples a batch of frames from the replay buffer and visualizes 'camera' images
+        along with their corresponding expert actions.
+
+        Args:
+            batch_size (int): Number of samples to show.
+            seed (int or None): Random seed for reproducibility.
+        """
+        if self.replay_buffer.size == 0:
+            print("Replay buffer is empty.")
+            return
+
+        if seed is not None:
+            random.seed(seed)
+
+        batch_size = min(batch_size, self.replay_buffer.size)
+        indices = random.sample(range(self.replay_buffer.size), batch_size)
+        samples = [self.replay_buffer[i] for i in indices]
+
+        cols = min(batch_size, 4)
+        rows = (batch_size + cols - 1) // cols
+        fig, axs = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
+
+        if rows == 1:
+            axs = [axs]  # flatten single-row case
+        axs = np.array(axs).flatten()
+
+        for ax, sample, idx in zip(axs, samples, indices):
+            image = sample['camera']
+            if image.ndim == 2:
+                image = np.stack([image] * 3, axis=-1)
+            elif image.shape[-1] == 1:
+                image = np.repeat(image, 3, axis=-1)
+
+            action = sample.get('action', None)
+
+            ax.imshow(image.astype(np.uint8))
+            ax.axis('off')
+            ax.set_title(f"Idx {idx}\nAction: {np.round(action, 2)}")
+
+        # Hide any unused axes
+        for i in range(len(samples), len(axs)):
+            axs[i].axis('off')
+
+        plt.tight_layout()
+        plt.show()
 
     def pretrain_save(self, evaluate_res, cur_beta):
         """Called to save ideal pretrained model that will be suitable for future experiment:
@@ -505,6 +633,8 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                             self.evaluation_list[domain_name][benchmark].append(evaluate_res[domain_name][benchmark])
                     if stop_flag:
                         logger.info("//////////////////////// convergence to successful behavior  ////////////////////// early stop triggered !!!!")
+                        data_dir = Path(__file__).parent.parent / 'data'
+                        self.replay_buffer.export(path = data_dir, name = self.comment) # save the data only when successfully converging to successful behaviors
                         break
 
                     self.pretrain_save(evaluate_res, cur_beta = cur_beta)
@@ -540,10 +670,6 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                     with open(profile_path, 'wb') as f:
                         pickle.dump(profile_data, f)
                     logger.info(f"Training profile saved to {profile_path}")
-                
-                if self.save_data:
-                    data_dir = Path(__file__).parent.parent / 'data'
-                    self.replay_buffer.export(path = data_dir, name = self.comment)
 
         finally:
             benchmark_list = self.evaluation_list[self.domain_list[0]["name"]].keys()
@@ -616,7 +742,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                     max_traj_len = min(1024, total_length - batch_traj_len)
 
                 sample_domain = self.sample_domain(global_step)
-                traj_len = self.sample_trajectory_with_future(domain = sample_domain, beta = beta, pbar=pbar, max_traj_len=max_traj_len)
+                traj_len = self.sample_trajectory_with_near_future(domain = sample_domain, beta = beta, pbar=pbar, max_traj_len=max_traj_len)
                 batch_traj_len += traj_len
                 n_resets += 1
 

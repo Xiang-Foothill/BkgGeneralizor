@@ -64,7 +64,7 @@ PRETRAIN_ENCODER9 = 'L_track_barc_many_domains_test2' # domain list: [DOMAIN2, D
 
 PRETRAIN_LIGHTS = 'L_track_barc_light_domains' #domain list: [DOMAIN4, DOMAIN7, DOMAIN8]; visual_encoder output size: 512
 PRETRAIN_LIGHTS2 = 'L_track_barc_light_domains2' #domain list: [DOMAIN4, DOMAIN7, DOMAIN8]; visual_encoder output size: 512
-
+PRETRAIN_BRIGHT1 = 'L_track_barc_pretrain_bright1' # domain list: DOMAIN7, DOMAIN8; visual_encoder output size: 512
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
@@ -115,7 +115,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         @param n_initial_training_epochs:
         @param agent_params:
         """
-        self.pretrain_encoder_path = PRETRAIN_LIGHTS2
+        self.pretrain_encoder_path = PRETRAIN_BRIGHT1
         self.target_domain_len = target_domain_len
         self.target_domains = [DOMAIN12]
 
@@ -682,8 +682,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                 rand_beta = np.random.uniform(low = beta - 0.05, high = beta + 0.05)
                 domain = np.random.choice(domain_list)
 
-                # traj_len = self.sample_trajectory_with_future(domain = domain, beta = rand_beta, pbar=pbar, max_traj_len=max_traj_len, buffer = buffer)
-                traj_len = self.random_sample(domain = domain, pbar = pbar, max_traj_len=max_traj_len, buffer = buffer)
+                traj_len = self.sample_trajectory(domain = domain, beta = rand_beta, pbar=pbar, max_traj_len=max_traj_len, buffer = buffer)
+                # traj_len = self.random_sample(domain = domain, pbar = pbar, max_traj_len=max_traj_len, buffer = buffer)
 
                 batch_traj_len += traj_len
                 n_resets += 1
