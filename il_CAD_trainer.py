@@ -26,6 +26,7 @@ import models.feedforward
 from models.visionSafeAC import VisionNaiveMultihead, VisionNaiveRandomization, VisionCompleteMultiHead, VisionAdversarialAdaptAC, VisionAdversarialActor, VisionConditionAdversarialAdaptAC, VisionNullAdaptAC, VisionProjConditionAdversarialAC
 from models.base_model import BaseModel
 from domain_randomnization.randomnizor import BkgRandomnizer, linProgRandomnizer, ContrastRandomnizer
+from models.adaptAC import WassersteinAdversarialAdaptAC, WassersteinConditionAdversarialAdaptAC
 
 from utils import data_util
 from torch.utils.data import DataLoader
@@ -231,11 +232,10 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         logger.info("//// Loading pretrained encoders ////")
         pretrain_agent.load(path=Path(__file__).resolve().parent / 'model_data' / 'pretrained_agents',
                            name=self.pretrain_encoder_path)
-        
 
-        actor_cls = VisionAdversarialAdaptAC
+        actor_cls = WassersteinAdversarialAdaptAC
         if self.discriminator_type == 'cat_condition':
-            actor_cls = VisionConditionAdversarialAdaptAC
+            actor_cls = WassersteinConditionAdversarialAdaptAC
         if self.discriminator_type == 'null':
             actor_cls = VisionNullAdaptAC
         if self.discriminator_type == 'proj_condition':

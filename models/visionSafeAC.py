@@ -1223,7 +1223,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         super().__init__()
         
         if pretrain_agent is None:
-            return
+            return # null initialization
 
         self.actor = VisionAdversarialActor(pretrain_agent=pretrain_agent)
 
