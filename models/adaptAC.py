@@ -1,11 +1,12 @@
-from visionSafeAC import Discriminator, VisionAdversarialActor, VisionAdversarialAdaptAC, VisionNaiveRandomization, VisionConditionalAdversarialActor
+from models.visionSafeAC import Discriminator, VisionAdversarialActor, VisionAdversarialAdaptAC, VisionNaiveRandomization, VisionConditionalAdversarialActor
 import torch
 from utils import pytorch_util as ptu
+from loguru import logger
 
 class WassersteinDiscriminator(Discriminator):
     """Wasserstein discriminator with soft gradient penalty and explicit gradient norms."""
 
-    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_dim, null_init=False, gp_lambda=10.0):
+    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_dim, null_init=False, gp_lambda=3.0):
         super().__init__(lr, weight_decay, encoder_output_dim, dis_info_dim, null_init)
         self.gp_lambda = gp_lambda # parameter for gradient penalty
 
@@ -26,7 +27,7 @@ class WassersteinDiscriminator(Discriminator):
         )[0]
         grad_norms = gradients.view(gradients.size(0), -1).norm(2, dim=1).detach()
 
-        return domain_logits, grad_norms
+        return (domain_logits, grad_norms)
 
     def loss(self, pred, label):
         domain_logits, grad_norms = pred
@@ -78,12 +79,11 @@ class CatWassersteinDiscriminator(WassersteinDiscriminator):
         """The conditioning policy is simply concatenate the latent vectors with the discriminative information"""
 
         combined = torch.cat([l, dis_info], dim = 1)
-        return (self.D(combined), ) # return the logit value computed by the discriminator
+        return super().forward(combined) # return the logit value computed by the discriminator
 
 class WassersteinAdversarialActor(VisionAdversarialActor):
     def loss(self, pred, label):
-        u_pred, domain_logits = pred  # domain_logits is a tuple: (logits, _)
-        domain_logits, _ = domain_logits
+        u_pred, domain_logits = pred
 
         u, domain_ind = label
         domain_ind = domain_ind.view(-1, 1)
@@ -115,10 +115,38 @@ class WassersteinAdversarialActor(VisionAdversarialActor):
             'total_loss': total_loss.item()
         }
 
+class WassersteinConditionAdversarialActor(WassersteinAdversarialActor):
+
+    feature_fields = ['camera', 'velocity', 'state', 'curvature']
+    label_fields = ['action', "domain_indicator"]
+
+    def forward(self, img, vel, state, curvature):
+
+        # Normalize the image first. 
+        img = img.permute(0, 3, 1, 2) / 255.
+
+        l = self.resnet(img)
+        dis_info = self.discriminator.discriminative_info(state, curvature)
+
+        # logger.info(f"the disinfo = {dis_info}")
+        
+        outputs = self.discriminator(l, dis_info)  # allow gradients to flow
+
+        domain_logits = outputs[0]
+
+        if self.check_latent_collapse(l):
+            logger.info("WARNING: latent space collapse is detected!")
+
+        v_encoded = self.velocity_encoder(vel)
+        combined = torch.cat([l, v_encoded], dim=1)  # shape: [batch_size, latent_dim]
+
+        output = self.decision(combined)
+        return (output, domain_logits)
+
 class WassersteinAdversarialAdaptAC(VisionAdversarialAdaptAC):
 
     def __init__(self, pretrain_agent : VisionNaiveRandomization, pretrain_agent_params: dict, ad_agent_params: dict):
-        super().__init__(pretrain_agent = None) # null init the super class
+        super().__init__(pretrain_agent = None, pretrain_agent_params = None, ad_agent_params = None) # null init the super class
         self.actor = WassersteinAdversarialActor(pretrain_agent=pretrain_agent)
 
         # initialize the discriminator
@@ -152,7 +180,7 @@ class WassersteinConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
         if pretrain_agent == None:
             return # the null initialization
         
-        self.actor = VisionConditionalAdversarialActor(pretrain_agent=pretrain_agent)
+        self.actor = WassersteinConditionAdversarialActor(pretrain_agent=pretrain_agent)
 
         # initialize the discriminator
         self.discriminator = CatWassersteinDiscriminator(lr = ad_agent_params['lr_discriminator'], 

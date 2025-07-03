@@ -963,8 +963,9 @@ class VisionAdversarialActor(BaseModel):
         img = img.permute(0, 3, 1, 2) / 255.
 
         l = self.resnet(img)
-        domain_logits, = self.discriminator(l)  # allow gradients to flow
-
+        outputs = self.discriminator(l)  # allow gradients to flow
+        domain_logits = outputs[0]
+        
         if self.check_latent_collapse(l):
             logger.info("WARNING: latent space collapse is detected!")
 
@@ -1308,7 +1309,9 @@ class VisionConditionalAdversarialActor(VisionAdversarialActor):
 
         # logger.info(f"the disinfo = {dis_info}")
         
-        domain_logits, = self.discriminator(l, dis_info)  # allow gradients to flow
+        outputs = self.discriminator(l, dis_info)  # allow gradients to flow
+
+        domain_logits = outputs[0]
 
         if self.check_latent_collapse(l):
             logger.info("WARNING: latent space collapse is detected!")

@@ -118,7 +118,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         """
         self.pretrain_encoder_path = PRETRAIN_BRIGHT1
         self.target_domain_len = target_domain_len
-        self.target_domains = [DOMAIN12]
+        self.target_domains = [DOMAIN5]
 
         self.discriminator_type = discriminator_type
 
@@ -503,7 +503,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         # before starting tuning the model for domain adpatation, do the evaluation for different domains
         logger.info("Pretraining Evaluation .......")
         self.evaluate_agent(eval_domains = self.target_domains)
-        # self.PCA_visualization(visualization_list)
+        self.PCA_visualization(visualization_list)
 
         # Directory for saving training profiles
         profile_dir = Path(__file__).parent.parent / 'training_profiles'
