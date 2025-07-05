@@ -66,11 +66,14 @@ PRETRAIN_ENCODER9 = 'L_track_barc_many_domains_test2' # domain list: [DOMAIN2, D
 PRETRAIN_LIGHTS = 'L_track_barc_light_domains' #domain list: [DOMAIN4, DOMAIN7, DOMAIN8]; visual_encoder output size: 512
 PRETRAIN_LIGHTS2 = 'L_track_barc_light_domains2' #domain list: [DOMAIN4, DOMAIN7, DOMAIN8]; visual_encoder output size: 512
 PRETRAIN_BRIGHT1 = 'L_track_barc_pretrain_bright1' # domain list: DOMAIN7, DOMAIN8; visual_encoder output size: 512
+PRETRAIN_BRIGHT2 = 'L_track_barc_pretrain_bright2' #domain list: DOMAIN7, DOMAIN6, DOMAIN4; visual encoder output size: 512; Trained for 17 epochs
+PRETRAIN_BRIGHT3 = 'L_track_barc_pretrain_bright3' #domain list: DOMAIN7, DOMAIN6, DOMAIN4; visual encoder output size: 512; Trained for 16 epochs
+
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
 }
-from il_NR_trainer import DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DOMAIN8, DOMAIN9, DOMAIN11, DOMAIN12, FULL_EVALUATION_LIST
+from il_NR_trainer import DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DOMAIN8, DOMAIN9, DOMAIN11, DOMAIN12, DOMAIN14, FULL_EVALUATION_LIST
 
 class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafeAC):
 
@@ -116,9 +119,9 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         @param n_initial_training_epochs:
         @param agent_params:
         """
-        self.pretrain_encoder_path = PRETRAIN_BRIGHT1
+        self.pretrain_encoder_path = PRETRAIN_BRIGHT3
         self.target_domain_len = target_domain_len
-        self.target_domains = [DOMAIN5]
+        self.target_domains = [DOMAIN12]
 
         self.discriminator_type = discriminator_type
 
@@ -167,7 +170,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             else:
                 logger.warning(f"No training profile found at {profile_path}. Starting fresh.")
 
-        profile_path = Path(__file__).parent.parent / 'training_profiles' / 'pretrain_agent_profiles' /  f"{self.pretrain_encoder_path}_training_profile.pkl"
+        profile_path = Path(__file__).parent.parent / 'training_profiles' / f"{self.pretrain_encoder_path}_training_profile.pkl"
         # load the information about the pretrain agent so that initialization of the current matches the pretrained agent
         if profile_path.exists():
             with open(profile_path, 'rb') as f:
@@ -230,12 +233,12 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         pretrain_agent = VisionNaiveRandomization(**pretrain_agent_params)
 
         logger.info("//// Loading pretrained encoders ////")
-        pretrain_agent.load(path=Path(__file__).resolve().parent / 'model_data' / 'pretrained_agents',
+        pretrain_agent.load(path=Path(__file__).resolve().parent / 'model_data',
                            name=self.pretrain_encoder_path)
 
-        actor_cls = WassersteinAdversarialAdaptAC
+        actor_cls = VisionAdversarialAdaptAC
         if self.discriminator_type == 'cat_condition':
-            actor_cls = WassersteinConditionAdversarialAdaptAC
+            actor_cls = VisionConditionAdversarialAdaptAC
         if self.discriminator_type == 'null':
             actor_cls = VisionNullAdaptAC
         if self.discriminator_type == 'proj_condition':
@@ -503,7 +506,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         # before starting tuning the model for domain adpatation, do the evaluation for different domains
         logger.info("Pretraining Evaluation .......")
         self.evaluate_agent(eval_domains = self.target_domains)
-        self.PCA_visualization(visualization_list)
+        self.PCA_visualization(visualization_list, display_full_name = False)
 
         # Directory for saving training profiles
         profile_dir = Path(__file__).parent.parent / 'training_profiles'
@@ -514,7 +517,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         if not self.to_reload: # if the classifier is not part of the loaded model, train it from scratch
             logger.info("---------- collecting data from the target domains ----------")
             try:
-                cur_beta = 0.1
+                cur_beta = 0.2
                 logger.info(f"the compensated beta value for the spawning this time is {cur_beta}")
                 self.sample_trajectories(beta = cur_beta, domain_list = self.target_domains,
                         total_length=self.target_domain_len, buffer = self.replay_buffer.target_buffer,
@@ -532,7 +535,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                 self.train_module(self.agent, global_step)
 
                 if global_step % self.visualize_freq == 0:
-                    self.PCA_visualization(visualization_list)
+                    self.PCA_visualization(visualization_list, display_full_name=False)
 
                 if self.no_saving:
                     continue
@@ -588,7 +591,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             logger.info(f"the images are added to logged in")
             # self.writer.ntfy(message="Training program terminated.")
     
-    def PCA_visualization(self, collect_domains):
+    def PCA_visualization(self, collect_domains, display_full_name=True):
         """Using the PCA technique to visualize the high-dimensional latent vector space"""
         """Use PCA to project and visualize latent vectors from all domains in 2D."""
         logger.info("Collecting data for latent space visualization...")
@@ -616,7 +619,16 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         plt.figure(figsize=(8, 6))
         for idx, domain_name in enumerate(domain_names):
             mask = (domain_labels == idx)
-            plt.scatter(latent_2d[mask, 0], latent_2d[mask, 1], label=domain_name, s=10)
+            if display_full_name:
+                legend_name = domain_name
+            else:
+                source_name_list = [domain['name'] for domain in self.domain_list]
+                if domain_name in source_name_list:
+                    domain_index = source_name_list.index(domain_name)
+                    legend_name = f"source domain {domain_index}"
+                else:
+                    legend_name = "target domain"
+            plt.scatter(latent_2d[mask, 0], latent_2d[mask, 1], label=legend_name, s=10)
 
         plt.title("PCA Visualization of Latent Vectors Across Domains")
         plt.xlabel("PCA Component 1")
@@ -625,7 +637,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         plt.grid(True)
         plt.tight_layout()
         plt.show()
-    
+
     def collect_latent(self, collect_domains, max_laps = 1):
 
         logger.info("Collecting latent vectors")
@@ -679,11 +691,11 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             while batch_traj_len < total_length:
 
                 max_traj_len = min(1024, total_length - batch_traj_len)
-                rand_beta = np.random.uniform(low = beta - 0.05, high = beta + 0.05)
+                rand_beta = np.random.uniform(low = beta - 0.1, high = beta + 0.1)
                 domain = np.random.choice(domain_list)
 
-                traj_len = self.sample_trajectory(domain = domain, beta = rand_beta, pbar=pbar, max_traj_len=max_traj_len, buffer = buffer)
-                # traj_len = self.random_sample(domain = domain, pbar = pbar, max_traj_len=max_traj_len, buffer = buffer)
+                #traj_len = self.sample_trajectory(domain = domain, beta = rand_beta, pbar=pbar, max_traj_len=max_traj_len, buffer = buffer)
+                traj_len = self.random_sample(domain = domain, pbar = pbar, max_traj_len=max_traj_len, buffer = buffer)
 
                 batch_traj_len += traj_len
                 n_resets += 1
@@ -745,7 +757,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_epochs', type=int, default=500)
     parser.add_argument('--initial_traj_len', type=int, default=3072)
     parser.add_argument('--n_training_per_epoch', type=int, default=1)
-    parser.add_argument('--n_initial_training_epochs', type=int, default=2) 
+    parser.add_argument('--n_initial_training_epochs', type=int, default=1) 
     parser.add_argument('--replay_buffer_maxsize', type=int, default= 51_200) # the original replay buffer maximum size: 102_400
     parser.add_argument('--expert', '-c', type=str, default='mpcc-conv',
                         choices=tuple(expert_mp.keys()))

@@ -67,6 +67,7 @@ DOMAIN10 = {"name": "bus stops when the sky is really dark", "map_name": L_TRACK
 DOMAIN11 = {"name": "traffic corns when the sky is really dark", "map_name": L_TRACK_BARC4, "weatherID" : 6}
 DOMAIN12 = {"name": "lawn when sky is really dark", "map_name": L_TRACK_BARC2, "weatherID" : 5}
 DOMAIN13 = {"name": "forest_sim_track1_noon", "map_name": FOREST_SIM_TRACK1, "weatherID" : 0}
+DOMAIN14 = {"name": "fence in the rain", "map_name": L_TRACK_BARC1, "weatherID": 7}
 
 FULL_EVALUATION_LIST = [DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DOMAIN8, DOMAIN10, DOMAIN11, DOMAIN12]
 
@@ -187,7 +188,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         if pretrain_critic:
             self.pretrain_critic()
         
-        self.domain_list = [DOMAIN7, DOMAIN8] # the training-time available domains
+        self.domain_list = [DOMAIN7, DOMAIN6, DOMAIN4] # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
 
         # the list used to store evaluation result
@@ -637,7 +638,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                         self.replay_buffer.export(path = data_dir, name = self.comment) # save the data only when successfully converging to successful behaviors
                         break
 
-                    self.pretrain_save(evaluate_res, cur_beta = cur_beta)
+                    # self.pretrain_save(evaluate_res, cur_beta = cur_beta)
                 
                 if self.latent and global_step % self.visualize_freq == 0:
                     logger.info("collecting data for latent space visualization")
@@ -878,7 +879,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_saving', action='store_true')
     parser.add_argument('--eval_freq', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=64)
-    parser.add_argument('--beta', type=float, default=0.90)
+    parser.add_argument('--beta', type=float, default=0.8)
     parser.add_argument('--beta_decay_freq', type=int, default=1)
 
     parser.add_argument('--evaluation', action='store_true')

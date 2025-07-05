@@ -246,7 +246,7 @@ class VisionNaiveRandomization(BaseModel):
 
         self.optimizer = Adam(itertools.chain(self.resnet.parameters(), self.decision.parameters(), self.velocity_encoder.parameters()), lr=lr,
                               weight_decay=weight_decay)
-        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=1)  # 0.1 ** (1 / 100))
+        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=0.977)  # 0.1 ** (1 / 100))
         self.loss_func = nn.MSELoss()
         self.log_sigmoid = nn.LogSigmoid()
         self.lam = lam
@@ -909,8 +909,11 @@ class VisionAdversarialActor(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', "domain_indicator"]
 
-    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.1):
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 1.0, adv_gamma = 0.8):
         """
+        adv_factor: the factor multiplied by the adversarial loss
+        adv_gamma: the decay factor of adv_factor
+
         Model Input: states
         Model Output: actions
 
@@ -925,6 +928,7 @@ class VisionAdversarialActor(BaseModel):
         self.loss_func = nn.MSELoss()
 
         self.adv_factor = adv_factor # the factor multiplied by the adversarial loss before adding it to the total loss
+        self.adv_gamma = adv_gamma
 
         # freeze the velocity encoder
         for p in self.velocity_encoder.parameters():
@@ -965,7 +969,7 @@ class VisionAdversarialActor(BaseModel):
         l = self.resnet(img)
         outputs = self.discriminator(l)  # allow gradients to flow
         domain_logits = outputs[0]
-        
+
         if self.check_latent_collapse(l):
             logger.info("WARNING: latent space collapse is detected!")
 
@@ -1044,7 +1048,11 @@ class VisionAdversarialActor(BaseModel):
                     val_examples += 1
                     for k, v in val_info.items():
                         val_scores[k] += v
+        # schedule the learning rate and the adv_factor               
         self.scheduler.step()
+        self.adv_factor = self.adv_factor * self.adv_gamma
+        logger.info(f"adv_factor updated to {self.adv_factor}")
+
         info = {
             'train': {f'{self.model_name}_loss': train_loss / train_examples,
                       **{f'{self.model_name}_{k}': v / train_examples for k, v in train_scores.items()}}
@@ -1112,10 +1120,11 @@ class Discriminator(BaseModel):
         ) # such a discriminator by default set the input size to be 512
 
         # self.D = nn.Linear(encoder_output_dim + dis_info_dim, 1) # the simplest version of discrminator network
+        gamma_decay = 0.6
 
         self.optimizer = Adam(self.D.parameters(), lr=lr,
                               weight_decay=weight_decay)
-        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=1)
+        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=gamma_decay)
     
     def freeze(self):
         logger.info(f"freeze the {self.model_name}")
@@ -1243,6 +1252,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         info = defaultdict(lambda: {})
         # first train the discriminator
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
+
         discriminator_info = self.discriminator.fit(n_epochs = n_epochs * 3, train_dataset = train_dataset, actor = self.actor)
 
         #train the actor

@@ -6,7 +6,7 @@ from loguru import logger
 class WassersteinDiscriminator(Discriminator):
     """Wasserstein discriminator with soft gradient penalty and explicit gradient norms."""
 
-    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_dim, null_init=False, gp_lambda=3.0):
+    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_dim, null_init=False, gp_lambda=0.5):
         super().__init__(lr, weight_decay, encoder_output_dim, dis_info_dim, null_init)
         self.gp_lambda = gp_lambda # parameter for gradient penalty
 
