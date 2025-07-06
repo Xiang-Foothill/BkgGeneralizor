@@ -508,7 +508,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         # before starting tuning the model for domain adpatation, do the evaluation for different domains
         logger.info("Pretraining Evaluation .......")
         self.evaluate_agent(eval_domains = self.target_domains)
-        self.PCA_visualization(visualization_list, display_full_name = False)
+        # self.PCA_visualization(visualization_list, display_full_name = False)
 
         # Directory for saving training profiles
         profile_dir = Path(__file__).parent.parent / 'training_profiles'

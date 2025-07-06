@@ -21,6 +21,7 @@ import copy
 from tqdm import tqdm
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
+import matplotlib.pyplot as plt
 
 class WassersteinDiscriminator(Discriminator):
     """Wasserstein discriminator with soft gradient penalty and explicit gradient norms."""
@@ -238,8 +239,14 @@ class DensityEstimator(BaseModel):
         best_h = grid.best_params_['bandwidth']
 
         return best_h
+    
+    def sigmoid_squash(self, x, bias, var, min_val=0.1, max_val=10):
+        """soft clipping strategy: used to regularize the range of density ratios while keeping the distribution 
+        structure of the density ratios"""
+        scaled = (x - bias) / (var + 1e-8)
+        return min_val + (max_val - min_val) * (1 / (1 + np.exp(-scaled)))
 
-    def fit(self, dataset: sourceTargetBalanceBuffer):
+    def fit(self, dataset: sourceTargetBalanceBuffer, display_ratio = False):
         if self.has_fit:
             logger.warning("The Density Ratio Estimator should only be fit for one time!")
         
@@ -257,6 +264,17 @@ class DensityEstimator(BaseModel):
         self.kde_tgt = KernelDensity(kernel='gaussian', bandwidth=target_bandwidth).fit(dis_info_target)
         logger.info(f"The ratio estimator is now fit.")
         self.has_fit = True
+
+        if display_ratio:
+            # Test the distribution of probability densities calculated by the density_estimator
+            tgt_display_ratios = self.sourceTargetRatios(dis_info = dis_info_target, to_tensor = False, clipped = False)
+            plt.figure(figsize=(8, 5))
+            plt.hist(tgt_display_ratios, bins=50, edgecolor='black')
+            plt.title("Histogram of Density Ratios (Source / Target)")
+            plt.xlabel("Density Ratio")
+            plt.ylabel("Frequency")
+            plt.grid(True)
+            plt.show()
     
     def densities(self, dis_info):
 
@@ -268,7 +286,7 @@ class DensityEstimator(BaseModel):
 
         return source_est, target_est
     
-    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True, to_tensor = True):
+    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True, to_tensor = True, clipped = True):
         """
         Compute density ratios w(x) = p_source(x) / (p_target(x) + epsilon)
         
@@ -294,16 +312,17 @@ class DensityEstimator(BaseModel):
 
         # Compute log ratio, then exponentiate
         log_ratio = log_p_src - log_p_tgt_clipped
-        ratio = np.exp(log_ratio)
 
-        # Optional normalization to have mean 1
-        if normalize:
-            ratio /= np.mean(ratio)
+        ratio = np.exp(log_ratio)
+        weight = np.log1p(ratio) # do log(1 + r) to smooth values smaller than 1
+
+        if clipped:
+            weight = np.clip(weight, 0.001, 100)
 
         if to_tensor:
-            ratio = ptu.from_numpy(ratio)
+            weight = ptu.from_numpy(weight)
 
-        return ratio
+        return weight
 
 class VisionConditionalAdversarialReweightActor(VisionConditionalAdversarialActor):
     """Based on the VisionConditionalAdversarialActor, when calculating adversarial loss, each target buffer data point will be weighted based on
