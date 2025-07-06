@@ -217,8 +217,8 @@ class DensityEstimator(BaseModel):
     def __init__(self):
         super().__init__()
         self.has_fit = False
-        self.kde_src : KernelDensity
-        self.kde_tgt : KernelDensity
+        self.kde_src : KernelDensity = None
+        self.kde_tgt : KernelDensity = None
 
     def dis_info_collate(self, dataset: EfficientReplayBuffer):
         state = dataset.fields["state"][:, -2:]
@@ -268,7 +268,7 @@ class DensityEstimator(BaseModel):
         logger.debug(source_est)
         return source_est, target_est
     
-    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True):
+    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True, to_tensor = True):
         """
         Compute density ratios w(x) = p_source(x) / (p_target(x) + epsilon)
         
@@ -280,6 +280,10 @@ class DensityEstimator(BaseModel):
         Returns:
             np.ndarray: Density ratios of shape [B]
         """
+
+        if self.kde_src is None or self.kde_tgt is None:
+            return None
+        
         if isinstance(dis_info, torch.Tensor):
             dis_info = ptu.clone_to_numpy(dis_info)
 
@@ -295,6 +299,9 @@ class DensityEstimator(BaseModel):
         # Optional normalization to have mean 1
         if normalize:
             ratio /= np.mean(ratio)
+
+        if to_tensor:
+            ratio = ptu.from_numpy(ratio)
 
         return ratio
 
@@ -315,7 +322,8 @@ class VisionConditionalAdversarialReweightActor(VisionConditionalAdversarialActo
         dis_info = self.discriminator.discriminative_info(state, curvature)
 
         # logger.info(f"the disinfo = {dis_info}")
-        
+
+        st_ratios = self.density_estimator.sourceTargetRatios(dis_info, to_tensor = True) # the source target ratios
         outputs = self.discriminator(l, dis_info)  # allow gradients to flow
 
         domain_logits = outputs[0]
@@ -327,37 +335,86 @@ class VisionConditionalAdversarialReweightActor(VisionConditionalAdversarialActo
         combined = torch.cat([l, v_encoded], dim=1)  # shape: [batch_size, latent_dim]
 
         output = self.decision(combined)
-        return (output, domain_logits)
+        return (output, domain_logits, st_ratios)
     
     def loss(self, pred, label):
-        raise NotImplementedError
-        u_pred, domain_logits = pred # the u_pred here has a shape of [64, 2], [batch_size, output_size]
-        u, domain_ind = label
+        u_pred, domain_logits, st_ratios = pred  # [B, 2], [B, 1], [B]
+        u, domain_ind = label                    # u: [B, 2], domain_ind: [B]
 
-        domain_ind = domain_ind.view(-1, 1)  # Ensure consistent shape: [batch_size, 1]
-        #    === Source mask for policy loss ===
-        source_mask = domain_ind.bool().squeeze(1)  # shape: [batch_size]
+        domain_ind = domain_ind.view(-1, 1)  # [B, 1]
+        source_mask = domain_ind.bool().squeeze(1)   # True if source
+        target_mask = ~source_mask                  # True if target
 
-        # === Policy loss: only for source samples ===
+        # === Policy loss: only source samples ===
         if source_mask.sum() > 0:
             policy_loss = self.loss_func(u_pred[source_mask], u[source_mask])
         else:
             policy_loss = torch.tensor(0.0, device=u.device)
 
-        # Adversarial loss: encourage encoder to fool discriminator
-        # Flip domain labels: try to make domain_ind_pred look like the opposite (e.g., 0.5 or source)
-        # target_labels = 1. - domain_ind.float()  # invert labels
-        target_labels = torch.ones_like(domain_ind, dtype=torch.float32) * 0.9  # new uniform label: 0.9 for all
+        # === Adversarial loss ===
+        target_labels = torch.ones_like(domain_ind, dtype=torch.float32) * 0.9  # encourage confusion
 
-        adv_loss_fn = nn.BCEWithLogitsLoss()
-        adv_loss = adv_loss_fn(domain_logits, target_labels)
+        # Compute per-sample BCE loss
+        adv_loss_raw = nn.functional.binary_cross_entropy_with_logits(
+            domain_logits, target_labels, reduction='none'  # [B, 1]
+        ).squeeze(1)  # shape: [B]
 
+        st_ratios = st_ratios.detach()  # stop gradients through density ratio
+
+        # Only weight the loss for target-domain samples
+        adv_loss = torch.zeros_like(adv_loss_raw)
+        adv_loss[target_mask] = adv_loss_raw[target_mask] * st_ratios[target_mask]
+        adv_loss[source_mask] = adv_loss_raw[source_mask]  # optionally: keep as is or mask to 0
+
+        # Normalize (optional): prevent magnitude explosion
+        adv_loss = adv_loss.mean()
+
+        # === Total loss ===
         total_loss = policy_loss + self.adv_factor * adv_loss
+
         return total_loss, {
-                'policy_loss': policy_loss.item(),
-                'adversarial_loss': adv_loss.item(),
-                'total_loss': total_loss.item()
+            'policy_loss': policy_loss.item(),
+            'adversarial_loss': adv_loss.item(),
+            'total_loss': total_loss.item()
         }
+
+class CatReweightDiscriminator(CatDiscriminator):
+    def set_density_estimator(self, density_estimator : DensityEstimator):
+        """set the KDE estimators as class attributes"""
+        self.density_estimator = density_estimator
+    
+    def forward(self, l, dis_info):
+
+        """The conditioning policy is simply concatenate the latent vectors with the discriminative information"""
+
+        combined = torch.cat([l, dis_info], dim = 1)
+        st_ratios = self.density_estimator.sourceTargetRatios(dis_info)
+
+        return (self.D(combined), st_ratios) # return the logit value computed by the discriminator
+    
+    def loss(self, pred, label):
+        domain_logits, st_ratios = pred  # domain_logits: [B, 1], st_ratios: [B]
+        domain_ind, = label              # domain_ind: [B, 1] (1 for source, 0 for target)
+
+        domain_ind = domain_ind.view(-1, 1)
+        source_mask = domain_ind.bool().squeeze(1)
+        target_mask = ~source_mask
+
+        # Compute per-sample BCE loss
+        bce_raw = nn.functional.binary_cross_entropy_with_logits(
+            domain_logits, domain_ind.float(), reduction='none'
+        ).squeeze(1)  # shape: [B]
+
+        st_ratios = st_ratios.detach()  # no gradient back into KDE
+
+        # Apply weights
+        weighted_loss = torch.zeros_like(bce_raw)
+        weighted_loss[source_mask] = bce_raw[source_mask]  # optionally leave unweighted
+        weighted_loss[target_mask] = bce_raw[target_mask] * st_ratios[target_mask]
+
+        loss_d = weighted_loss.mean()
+
+        return loss_d, {'discriminator_loss': loss_d.item()}
 
 class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptAC):
 
@@ -374,8 +431,28 @@ class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptA
 
         Loss: MSE
         """
-        super().__init__(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
+        super().__init__(pretrain_agent = None, pretrain_agent_params = None, ad_agent_params = None)
+
+        if pretrain_agent == None:
+            return # the null initialization
+        
+        self.actor = VisionConditionalAdversarialReweightActor(pretrain_agent=pretrain_agent)
+
+        # initialize the discriminator
+        # initialize the discriminator
+        self.discriminator = CatReweightDiscriminator(lr = ad_agent_params['lr_discriminator'], 
+                                           weight_decay = ad_agent_params['weight_decay'],
+                                           encoder_output_dim = ad_agent_params["encoder_output_dim"],
+                                           dis_info_dim = ad_agent_params['dis_info_dim'])
+        
+        self.actor.set_discriminator(self.discriminator)
         self.density_estimator = DensityEstimator()
+
+        self.actor.to(ptu.device)
+        self.discriminator.to(ptu.device)
+
+        self.actor.set_density_estimator(self.density_estimator)
+        self.discriminator.set_density_estimator(self.density_estimator)
     
     def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
         if global_step == 0:
