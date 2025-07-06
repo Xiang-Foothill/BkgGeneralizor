@@ -25,6 +25,8 @@ def from_numpy(x: np.ndarray):
 def to_numpy(x: torch.Tensor):
     return x.detach().cpu().numpy()
 
+def clone_to_numpy(x: torch.Tensor):
+    return x.clone().detach().cpu().numpy()
 
 _str_to_activation = {
     'relu': nn.ReLU(),

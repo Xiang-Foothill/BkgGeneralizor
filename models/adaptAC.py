@@ -1,7 +1,26 @@
-from models.visionSafeAC import Discriminator, VisionAdversarialActor, VisionAdversarialAdaptAC, VisionNaiveRandomization, VisionConditionalAdversarialActor
+from models.visionSafeAC import Discriminator, VisionAdversarialActor, VisionAdversarialAdaptAC, VisionNaiveRandomization, VisionConditionalAdversarialActor, VisionConditionAdversarialAdaptAC, CatDiscriminator
+import itertools
+from collections import defaultdict
+from typing import Dict, Tuple
+
+import numpy as np
 import torch
+import torch.nn as nn
+from torch.optim import Adam
+from torch.optim.lr_scheduler import ExponentialLR
+from torchvision.models import resnet18, ResNet18_Weights
+
 from utils import pytorch_util as ptu
+from .base_model import BaseModel
+from .safeAC import Dynamics, SafeCritic, SafeAC
+import pathlib as Path
 from loguru import logger
+from utils.data_util import EfficientReplayBuffer, EfficientReplayBufferPN, sourceTargetBalanceBuffer
+import torch.nn.functional as F
+import copy
+from tqdm import tqdm
+from sklearn.neighbors import KernelDensity
+from sklearn.model_selection import GridSearchCV
 
 class WassersteinDiscriminator(Discriminator):
     """Wasserstein discriminator with soft gradient penalty and explicit gradient norms."""
@@ -192,3 +211,187 @@ class WassersteinConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
 
         self.actor.to(ptu.device)
         self.discriminator.to(ptu.device)
+
+class DensityEstimator(BaseModel):
+    
+    def __init__(self):
+        super().__init__()
+        self.has_fit = False
+        self.kde_src : KernelDensity
+        self.kde_tgt : KernelDensity
+
+    def dis_info_collate(self, dataset: EfficientReplayBuffer):
+        state = dataset.fields["state"][:, -2:]
+        curvature = dataset.fields["states"]
+        dis_info = np.concatenate(state, curvature)
+        logger.debug(dis_info)
+        return dis_info
+    
+    def best_bandwidth(self, data):
+        # Choose a range of candidate bandwidths
+        bandwidths = np.logspace(-1.5, 1, 20)
+
+        grid = GridSearchCV(KernelDensity(kernel='gaussian'),
+                            {'bandwidth': bandwidths},
+                            cv=5)  # 5-fold cross-validation
+
+        grid.fit(data)  # X = your dataset (source or target)
+        best_h = grid.best_params_['bandwidth']
+
+        return best_h
+
+    def fit(self, dataset: sourceTargetBalanceBuffer):
+        if self.has_fit:
+            logger.warning("The Density Ratio Estimator should only be fit for one time!")
+        
+        logger.info("Fitting the density ratio estimator...")
+        dis_info_source = self.dis_info_collate(dataset.source_buffer)
+        dis_info_target = self.dis_info_collate(dataset.target_buffer)
+
+        source_bandwidth = self.best_bandwidth(dis_info_source)
+        target_bandwidth = self.best_bandwidth(dis_info_target)
+        logger.info(f"source domain bandwidth = {source_bandwidth}; target domain bandwidth = {target_bandwidth}")
+
+        self.kde_src = KernelDensity(kernel='gaussian', bandwidth=source_bandwidth).fit(dis_info_source)
+        self.kde_tgt = KernelDensity(kernel='gaussian', bandwidth=target_bandwidth).fit(dis_info_target)
+        logger.info(f"The ratio estimator is now fit.")
+        self.has_fit = True
+    
+    def densities(self, dis_info):
+
+        if isinstance(dis_info, torch.Tensor):
+            dis_info = ptu.clone_to_numpy()
+
+        source_est = self.kde_src.score_samples(dis_info)
+        target_est = self.kde_tgt.score_samples(dis_info)
+
+        logger.debug(source_est)
+        return source_est, target_est
+    
+    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True):
+        """
+        Compute density ratios w(x) = p_source(x) / (p_target(x) + epsilon)
+        
+        Args:
+            dis_info (np.ndarray or torch.Tensor): Input features of shape [B, D]
+            epsilon (float): Small value to avoid division by zero (log-domain)
+            normalize (bool): Whether to normalize the output weights to have mean 1
+
+        Returns:
+            np.ndarray: Density ratios of shape [B]
+        """
+        if isinstance(dis_info, torch.Tensor):
+            dis_info = ptu.clone_to_numpy(dis_info)
+
+        log_p_src, log_p_tgt = self.densities(dis_info)
+
+        # Stabilize denominator by clipping log_p_tgt
+        log_p_tgt_clipped = np.maximum(log_p_tgt, np.log(epsilon))
+
+        # Compute log ratio, then exponentiate
+        log_ratio = log_p_src - log_p_tgt_clipped
+        ratio = np.exp(log_ratio)
+
+        # Optional normalization to have mean 1
+        if normalize:
+            ratio /= np.mean(ratio)
+
+        return ratio
+
+class VisionConditionalAdversarialReweightActor(VisionConditionalAdversarialActor):
+    """Based on the VisionConditionalAdversarialActor, when calculating adversarial loss, each target buffer data point will be weighted based on
+    KDE esimation of discriminative information probability in both domains"""
+
+    def set_density_estimator(self, density_estimator : DensityEstimator):
+        """set the KDE estimators as class attributes"""
+        self.density_estimator = density_estimator
+
+    def forward(self, img, vel, state, curvature):
+
+        # Normalize the image first. 
+        img = img.permute(0, 3, 1, 2) / 255.
+
+        l = self.resnet(img)
+        dis_info = self.discriminator.discriminative_info(state, curvature)
+
+        # logger.info(f"the disinfo = {dis_info}")
+        
+        outputs = self.discriminator(l, dis_info)  # allow gradients to flow
+
+        domain_logits = outputs[0]
+
+        if self.check_latent_collapse(l):
+            logger.info("WARNING: latent space collapse is detected!")
+
+        v_encoded = self.velocity_encoder(vel)
+        combined = torch.cat([l, v_encoded], dim=1)  # shape: [batch_size, latent_dim]
+
+        output = self.decision(combined)
+        return (output, domain_logits)
+    
+    def loss(self, pred, label):
+        raise NotImplementedError
+        u_pred, domain_logits = pred # the u_pred here has a shape of [64, 2], [batch_size, output_size]
+        u, domain_ind = label
+
+        domain_ind = domain_ind.view(-1, 1)  # Ensure consistent shape: [batch_size, 1]
+        #    === Source mask for policy loss ===
+        source_mask = domain_ind.bool().squeeze(1)  # shape: [batch_size]
+
+        # === Policy loss: only for source samples ===
+        if source_mask.sum() > 0:
+            policy_loss = self.loss_func(u_pred[source_mask], u[source_mask])
+        else:
+            policy_loss = torch.tensor(0.0, device=u.device)
+
+        # Adversarial loss: encourage encoder to fool discriminator
+        # Flip domain labels: try to make domain_ind_pred look like the opposite (e.g., 0.5 or source)
+        # target_labels = 1. - domain_ind.float()  # invert labels
+        target_labels = torch.ones_like(domain_ind, dtype=torch.float32) * 0.9  # new uniform label: 0.9 for all
+
+        adv_loss_fn = nn.BCEWithLogitsLoss()
+        adv_loss = adv_loss_fn(domain_logits, target_labels)
+
+        total_loss = policy_loss + self.adv_factor * adv_loss
+        return total_loss, {
+                'policy_loss': policy_loss.item(),
+                'adversarial_loss': adv_loss.item(),
+                'total_loss': total_loss.item()
+        }
+
+class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptAC):
+
+    feature_fields = ['camera', 'velocity', 'state', 'curvature']
+    label_fields = ['action', "domain_indicator"]
+
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, pretrain_agent_params: dict, ad_agent_params: dict):
+        """
+        @ pretrain_encoder_path: the path to load the weight of the pretrained agent (the agent that will be adapted to the new environment)
+        @ pretrain_agent_params: the parameters of the pretrained encoder
+        @ ad_agent_params: the parameters of the discriminators, and some relevant modifications that should be made to the pretrain_agent params
+        Model Input: states
+        Model Output: actions
+
+        Loss: MSE
+        """
+        super().__init__(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
+        self.density_estimator = DensityEstimator()
+    
+    def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
+        if global_step == 0:
+            self.density_estimator.fit(train_dataset) # only fit the estimator at the first epoch
+
+        info = defaultdict(lambda: {})
+        # first train the discriminator
+        logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
+        discriminator_info = self.discriminator.fit(n_epochs = n_epochs * 3, train_dataset = train_dataset, actor = self.actor)
+
+        #train the actor
+        logger.info(f"///// Training the actor ///// [{self.actor.model_name}]")
+        actor_info = self.actor.fit(train_dataset=train_dataset, n_epochs = n_epochs)
+
+        for d in (discriminator_info, actor_info):
+            for k1, v1 in d.items():
+                for k2, v2 in v1.items():
+                    info[k1][k2] = v2
+        return info
