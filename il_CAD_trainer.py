@@ -26,7 +26,7 @@ import models.feedforward
 from models.visionSafeAC import VisionNaiveMultihead, VisionNaiveRandomization, VisionCompleteMultiHead, VisionAdversarialAdaptAC, VisionAdversarialActor, VisionConditionAdversarialAdaptAC, VisionNullAdaptAC, VisionProjConditionAdversarialAC
 from models.base_model import BaseModel
 from domain_randomnization.randomnizor import BkgRandomnizer, linProgRandomnizer, ContrastRandomnizer
-from models.adaptAC import WassersteinAdversarialAdaptAC, WassersteinConditionAdversarialAdaptAC
+from models.adaptAC import WassersteinAdversarialAdaptAC, WassersteinConditionAdversarialAdaptAC, VisionConditionAdversarialReweightAdaptAC
 
 from utils import data_util
 from torch.utils.data import DataLoader
@@ -144,6 +144,19 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         self.eval_rewards_last10 = deque(maxlen=10)
         self.visualize_freq = 2 # the frequency of visualizing latent vectors in terms epoc num
 
+        # an extra parameter
+        self.randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant", no_background = True) # set debug to false to speed up rendering
+        transform = {"camera": self.randomnizor.traditional_randomnize}
+
+        #initialize the data buffer
+        self.replay_buffer: 'data_util.sourceTargetBalanceBuffer' = None
+        self.replay_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
+                                        lazy_init=True,
+                                        transform = transform)
+        
+        data_dir = Path(__file__).parent.parent / 'data'
+        self.replay_buffer.source_buffer.load(path = data_dir, name = self.pretrain_encoder_path)
+
         self.update_carla_params(carla_params)
         self.env = gym.make('barc-v0', **carla_params)
         self.eps_len = min(replay_buffer_maxsize, eps_len)
@@ -200,19 +213,6 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
 
         self.save_profile = save_profile
 
-        # an extra parameter
-        self.randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant", no_background = True) # set debug to false to speed up rendering
-        transform = {"camera": self.randomnizor.traditional_randomnize}
-
-        #initialize the data buffer
-        self.replay_buffer: 'data_util.sourceTargetBalanceBuffer' = None
-        self.replay_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
-                                        lazy_init=True,
-                                        transform = transform)
-        
-        data_dir = Path(__file__).parent.parent / 'data'
-        self.replay_buffer.source_buffer.load(path = data_dir, name = self.pretrain_encoder_path)
-
         self.writer: 'MultiPurposeWriter' = MultiPurposeWriter(model_name=self.agent.model_name,
                                                                log_dir=f"logs/{self.agent.model_name}_{comment or ''}",
                                                                comment=comment or '',
@@ -243,6 +243,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             actor_cls = VisionNullAdaptAC
         if self.discriminator_type == 'proj_condition':
             actor_cls = VisionProjConditionAdversarialAC
+        if self.discriminator_type == 'cat_condition_reweight':
+            actor_cls = VisionConditionAdversarialReweightAdaptAC
         
         self.agent = actor_cls(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
         logger.debug(f"the loaded model is {self.agent.model_name}")
@@ -791,7 +793,7 @@ if __name__ == '__main__':
     parser.add_argument("--reload", action = "store_true", default = False)# whether to reload the existing model with the same name to keep training
     # parser.add_argument('--ntfy_freq', type=int, default=100)
     parser.add_argument("--target_domain_len", type = int, default = 2048) # the length of total trajectory sampled from the target domain
-    parser.add_argument("--discriminator", '-d', type = str, default = 'no_condition', choices = ('no_condition', 'cat_condition', 'proj_condition','null'))
+    parser.add_argument("--discriminator", '-d', type = str, default = 'no_condition', choices = ('no_condition', 'cat_condition', 'proj_condition','null', 'cat_condition_reweight'))
     
     params = vars(parser.parse_args())
 

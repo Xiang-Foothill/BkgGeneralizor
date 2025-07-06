@@ -222,18 +222,17 @@ class DensityEstimator(BaseModel):
 
     def dis_info_collate(self, dataset: EfficientReplayBuffer):
         state = dataset.fields["state"][:, -2:]
-        curvature = dataset.fields["states"]
-        dis_info = np.concatenate(state, curvature)
-        logger.debug(dis_info)
+        curvature = dataset.fields["curvature"]
+        dis_info = np.concatenate([state, curvature], axis = 1)
         return dis_info
     
-    def best_bandwidth(self, data):
+    def best_bandwidth(self, data, start: float, end: float):
         # Choose a range of candidate bandwidths
-        bandwidths = np.logspace(-1.5, 1, 20)
+        bandwidths = np.linspace(start, end, 6)
 
         grid = GridSearchCV(KernelDensity(kernel='gaussian'),
                             {'bandwidth': bandwidths},
-                            cv=5)  # 5-fold cross-validation
+                            cv=3)  # 3-fold cross-validation
 
         grid.fit(data)  # X = your dataset (source or target)
         best_h = grid.best_params_['bandwidth']
@@ -248,8 +247,10 @@ class DensityEstimator(BaseModel):
         dis_info_source = self.dis_info_collate(dataset.source_buffer)
         dis_info_target = self.dis_info_collate(dataset.target_buffer)
 
-        source_bandwidth = self.best_bandwidth(dis_info_source)
-        target_bandwidth = self.best_bandwidth(dis_info_target)
+        # source_bandwidth = self.best_bandwidth(dis_info_source, start = 0.002, end = 0.02)
+        # target_bandwidth = self.best_bandwidth(dis_info_target, start = 0.15, end = 0.3)
+        source_bandwidth = 0.0128 # the empirical value for the dataset of pretrain_bright3
+        target_bandwidth = 0.15 # the empirical value for the target domain dataset collected with the naive random sampling policy
         logger.info(f"source domain bandwidth = {source_bandwidth}; target domain bandwidth = {target_bandwidth}")
 
         self.kde_src = KernelDensity(kernel='gaussian', bandwidth=source_bandwidth).fit(dis_info_source)
@@ -265,7 +266,6 @@ class DensityEstimator(BaseModel):
         source_est = self.kde_src.score_samples(dis_info)
         target_est = self.kde_tgt.score_samples(dis_info)
 
-        logger.debug(source_est)
         return source_est, target_est
     
     def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True, to_tensor = True):
@@ -282,13 +282,13 @@ class DensityEstimator(BaseModel):
         """
 
         if self.kde_src is None or self.kde_tgt is None:
-            return None
+            return torch.tensor([0.]) # Null return if the kde estimator has not been initialized
         
         if isinstance(dis_info, torch.Tensor):
             dis_info = ptu.clone_to_numpy(dis_info)
 
         log_p_src, log_p_tgt = self.densities(dis_info)
-
+        
         # Stabilize denominator by clipping log_p_tgt
         log_p_tgt_clipped = np.maximum(log_p_tgt, np.log(epsilon))
 
@@ -359,7 +359,7 @@ class VisionConditionalAdversarialReweightActor(VisionConditionalAdversarialActo
             domain_logits, target_labels, reduction='none'  # [B, 1]
         ).squeeze(1)  # shape: [B]
 
-        st_ratios = st_ratios.detach()  # stop gradients through density ratio
+        st_ratios = st_ratios.detach().to(dtype=adv_loss_raw.dtype, device=adv_loss_raw.device)  # stop gradients through density ratio
 
         # Only weight the loss for target-domain samples
         adv_loss = torch.zeros_like(adv_loss_raw)
@@ -405,7 +405,7 @@ class CatReweightDiscriminator(CatDiscriminator):
             domain_logits, domain_ind.float(), reduction='none'
         ).squeeze(1)  # shape: [B]
 
-        st_ratios = st_ratios.detach()  # no gradient back into KDE
+        st_ratios = st_ratios.detach().to(dtype=bce_raw.dtype, device=bce_raw.device)  # no gradient back into KDE
 
         # Apply weights
         weighted_loss = torch.zeros_like(bce_raw)
