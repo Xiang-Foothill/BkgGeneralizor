@@ -1,7 +1,7 @@
 model_hparams: # the hyper parameters for the most naive version of domain adversarial domain adaptation
 
-    lr_discriminator: !!float 1e-3
-    lr_actor: !!float 5e-5
+    lr_discriminator: !!float 5e-4 # the orginal value is 1e-3
+    lr_actor: !!float 1.5e-6 # the original value is 5e-5
 
     encoder_output_dim : 512
     dis_info_dim : 0

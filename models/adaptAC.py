@@ -317,7 +317,7 @@ class DensityEstimator(BaseModel):
         weight = np.log1p(ratio) # do log(1 + r) to smooth values smaller than 1
 
         if clipped:
-            weight = np.clip(weight, 0.001, 100)
+            weight = np.clip(weight, 0.1, 10) # clip the weight values to prevent gradient explosion
 
         if to_tensor:
             weight = ptu.from_numpy(weight)

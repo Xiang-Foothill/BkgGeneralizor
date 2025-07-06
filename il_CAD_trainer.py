@@ -792,7 +792,7 @@ if __name__ == '__main__':
     parser.add_argument("--save_profile", action = "store_true", default = True) # whether to save thet training profiles
     parser.add_argument("--reload", action = "store_true", default = False)# whether to reload the existing model with the same name to keep training
     # parser.add_argument('--ntfy_freq', type=int, default=100)
-    parser.add_argument("--target_domain_len", type = int, default = 2048) # the length of total trajectory sampled from the target domain
+    parser.add_argument("--target_domain_len", '-t', type = int, default = 2048) # the length of total trajectory sampled from the target domain
     parser.add_argument("--discriminator", '-d', type = str, default = 'no_condition', choices = ('no_condition', 'cat_condition', 'proj_condition','null', 'cat_condition_reweight'))
     
     params = vars(parser.parse_args())
