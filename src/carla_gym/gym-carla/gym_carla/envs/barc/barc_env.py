@@ -346,6 +346,43 @@ class BarcEnv(gym.Env):
                 'camera': camera,
             })
         return ob
+    
+    def first4mDistribution_random_obs(self) -> Dict[str, np.ndarray]:
+        """Randomly sample observations in the barc env.
+        With a probaility of 70%, a vehicle state along the first 4 meters of the trajectory will be chosen.
+        Otherwise, a vehicle state along the rest of the track will be chosen"""
+        if np.random.uniform(low = 0. , high = 1.) < 0.7:
+            s = np.random.uniform(low = 0.0, high = 4.0) # sample along the first 4 meters of the trajectory
+        else:
+            s = np.random.uniform(low = 4.0, high = self.track_obj.track_length - 1.0) # sample along the rest of the trajectory other than the first 4 meters
+            
+        random_state = VehicleState(t=0.0,
+                                          p=ParametricPose(s=s,
+                                                           x_tran=np.random.uniform(
+                                                               -self.track_obj.half_width / 1.2,
+                                                               self.track_obj.half_width / 1.2),
+                                                           e_psi=np.random.uniform(-np.pi / 6, np.pi / 6), ),
+                                          # e=OrientationEuler(psi=0),
+                                          v=BodyLinearVelocity(v_long=np.random.uniform(0.5, 2), v_tran=0),
+                                          w=BodyAngularVelocity(w_psi=0))
+        self.track_obj.local_to_global_typed(random_state)
+
+        ob = {
+            'gps': np.array([random_state.x.x, random_state.x.y, random_state.e.psi], dtype=np.float32),
+            'velocity': np.array([random_state.v.v_long, random_state.v.v_tran, random_state.w.w_psi],
+                                 dtype=np.float32),
+            'state': np.array([random_state.v.v_long, random_state.v.v_tran, random_state.w.w_psi,
+                               random_state.p.s, random_state.p.x_tran, random_state.p.e_psi], dtype=np.float32),
+            'curvature': self.curvature_in_horizon(random_state),
+        }
+
+        if self.enable_camera:
+            camera, semantics = self.camera_bridge.query_rgb(random_state)
+            ob.update({
+                'camera': camera,
+            })
+        return ob
+
 
     def _get_obs(self) -> Dict[str, np.ndarray]:
         ob = {

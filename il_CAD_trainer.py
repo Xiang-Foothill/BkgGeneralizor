@@ -359,7 +359,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
 
         while traj_len < max_traj_len:
             self.label_domain(ob, domain)
-            next_ob = self.env.get_random_obs()
+            next_ob = self.env.first4mDistribution_random_obs() # choose the random sample distribution policy
 
             #some null observation without specific meaning but only for data structure consistency
             rew, expert_ac, closed_loop_action = 0.0, np.zeros((2,)), np.zeros((2,))

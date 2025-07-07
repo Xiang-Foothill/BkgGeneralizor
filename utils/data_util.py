@@ -229,6 +229,12 @@ class EfficientReplayBuffer(Dataset, ABC):
         for attr in self.fields:
             self.fields[attr][[index, other_index]] = self.fields[attr][[other_index, index]]
 
+    def retrieve_entire_field(self, field_name : str):
+        """retrieve all the examples of a specific data field in the buffer"""
+        if field_name not in self.fields:
+            raise ValueError(f"the field name {field_name} is not a attainable field of this data buffer")
+        return self.fields[field_name][self.left : self.right, :]
+
     def consolidate(self) -> Dict[str, np.ndarray]:
         if self.left + self.size <= self.maxsize:
             data = {k: v[self.left: self.right] for k, v in self.fields.items()}

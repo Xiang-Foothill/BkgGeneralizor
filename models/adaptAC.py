@@ -222,14 +222,14 @@ class DensityEstimator(BaseModel):
         self.kde_tgt : KernelDensity = None
 
     def dis_info_collate(self, dataset: EfficientReplayBuffer):
-        state = dataset.fields["state"][:, -2:]
-        curvature = dataset.fields["curvature"]
+        state = dataset.retrieve_entire_field("state")[:, -2:]
+        curvature = dataset.retrieve_entire_field("curvature")
         dis_info = np.concatenate([state, curvature], axis = 1)
         return dis_info
     
     def best_bandwidth(self, data, start: float, end: float):
         # Choose a range of candidate bandwidths
-        bandwidths = np.linspace(start, end, 6)
+        bandwidths = np.linspace(start, end, 10)
 
         grid = GridSearchCV(KernelDensity(kernel='gaussian'),
                             {'bandwidth': bandwidths},
@@ -254,16 +254,21 @@ class DensityEstimator(BaseModel):
         dis_info_source = self.dis_info_collate(dataset.source_buffer)
         dis_info_target = self.dis_info_collate(dataset.target_buffer)
 
-        # source_bandwidth = self.best_bandwidth(dis_info_source, start = 0.002, end = 0.02)
-        # target_bandwidth = self.best_bandwidth(dis_info_target, start = 0.15, end = 0.3)
-        source_bandwidth = 0.0128 # the empirical value for the dataset of pretrain_bright3
-        target_bandwidth = 0.15 # the empirical value for the target domain dataset collected with the naive random sampling policy
+        # source_bandwidth = self.best_bandwidth(dis_info_source, start = 0.02, end = 0.05)
+        # target_bandwidth = self.best_bandwidth(dis_info_target, start = 0.055, end = 0.08)
+
+        source_bandwidth = 0.04 # the empirical value for the dataset of pretrain_bright3
+        # target_bandwidth = 0.15 # the empirical value for the target domain dataset collected with the naive random sampling policy
+        target_bandwidth = 0.055 # the empirical value for first4mDistribution with a size of 512
+
         logger.info(f"source domain bandwidth = {source_bandwidth}; target domain bandwidth = {target_bandwidth}")
 
         self.kde_src = KernelDensity(kernel='gaussian', bandwidth=source_bandwidth).fit(dis_info_source)
         self.kde_tgt = KernelDensity(kernel='gaussian', bandwidth=target_bandwidth).fit(dis_info_target)
         logger.info(f"The ratio estimator is now fit.")
         self.has_fit = True
+
+        self.st_ratios_target_mean = np.mean(self.sourceTargetRatios(dis_info = dis_info_target, to_tensor = False, clipped=False, normalize = False))
 
         if display_ratio:
             # Test the distribution of probability densities calculated by the density_estimator
@@ -286,7 +291,7 @@ class DensityEstimator(BaseModel):
 
         return source_est, target_est
     
-    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True, to_tensor = True, clipped = True):
+    def sourceTargetRatios(self, dis_info, epsilon: float = 1e-8, normalize: bool = True, to_tensor : bool = True, clipped : bool = True):
         """
         Compute density ratios w(x) = p_source(x) / (p_target(x) + epsilon)
         
@@ -314,10 +319,14 @@ class DensityEstimator(BaseModel):
         log_ratio = log_p_src - log_p_tgt_clipped
 
         ratio = np.exp(log_ratio)
-        weight = np.log1p(ratio) # do log(1 + r) to smooth values smaller than 1
+
+        if normalize:
+            weight = np.log1p(ratio) / self.st_ratios_target_mean # do log(1 + r) to smooth values smaller than 1
+        else:
+            weight = np.log1p(ratio)
 
         if clipped:
-            weight = np.clip(weight, 0.1, 10) # clip the weight values to prevent gradient explosion
+            weight = np.clip(weight, 0.75, 10) # clip the weight values to prevent gradient explosion
 
         if to_tensor:
             weight = ptu.from_numpy(weight)
@@ -475,12 +484,12 @@ class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptA
     
     def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
         if global_step == 0:
-            self.density_estimator.fit(train_dataset) # only fit the estimator at the first epoch
+            self.density_estimator.fit(train_dataset, display_ratio=True) # only fit the estimator at the first epoch
 
         info = defaultdict(lambda: {})
         # first train the discriminator
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
-        discriminator_info = self.discriminator.fit(n_epochs = n_epochs * 3, train_dataset = train_dataset, actor = self.actor)
+        discriminator_info = self.discriminator.fit(n_epochs = n_epochs * 4, train_dataset = train_dataset, actor = self.actor)
 
         #train the actor
         logger.info(f"///// Training the actor ///// [{self.actor.model_name}]")
