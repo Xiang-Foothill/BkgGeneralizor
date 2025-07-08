@@ -78,6 +78,7 @@ FULL_EVALUATION_LIST = [DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DO
 
 PRETRAIN_LIGHTS = 'L_track_barc_light_domains' #domain list: [DOMAIN4, DOMAIN7, DOMAIN8]; visual_encoder output size: 512
 PRETRAIN_LIGHTS2 = 'L_track_barc_light_domains2' #domain list: [DOMAIN4, DOMAIN7, DOMAIN8]; visual_encoder output size: 512
+PRETRAIN_BRIGHT3 = 'L_track_barc_pretrain_bright3' #domain list: DOMAIN7, DOMAIN6, DOMAIN4; visual encoder output size: 512; Trained for 16 epochs
 
 class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
 
@@ -98,12 +99,15 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                        beta=0.25,
                        pretrain_critic=False,
                        beta_decay_freq=5,
-                       save_profile = True,
+                       save_profile = False,
                        to_reload = False,
+                       save_model = False,
                        latent = False,
                        mid_freeze = np.inf,
                        to_PCA = False,
-                       save_data = True,
+                       target_domain_len = 548,
+                       env = None,
+                       source_buffer = None,
                        **agent_params):
         """
 
@@ -124,12 +128,16 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
         @param agent_params:
         """
 
-        self.pretrain_encoder_path = PRETRAIN_LIGHTS2
+        self.pretrain_encoder_path = PRETRAIN_BRIGHT3
         self.target_domains = [DOMAIN12]
 
         self.to_PCA = to_PCA
         self.pretrain_saved = False
+        self.target_domain_len = target_domain_len
         self.cur_epoch = 0
+        self.starting_step = starting_step
+        self.save_model = save_model
+
         self.best_avg_lap_time = np.inf
         self.beta_decay_freq = beta_decay_freq
         self.eval_freq = eval_freq
@@ -150,16 +158,34 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
         self.eval_rewards_last10 = deque(maxlen=10)
         self.visualize_freq = 5 # the frequency of visualizing latent vectors in terms epoc num
 
-        self.update_carla_params(carla_params)
-        self.env = gym.make('barc-v0', **carla_params)
-        self.eps_len = min(replay_buffer_maxsize, eps_len)
+        # an extra parameter
+        self.randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant", no_background = True) # set debug to false to speed up rendering
+        transform = {"camera": self.randomnizor.traditional_randomnize}
+
+        #initialize the data buffer
+        self.replay_buffer: 'data_util.sourceTargetBalanceBuffer' = None
+        self.replay_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
+                                        lazy_init=True,
+                                        transform = transform,
+                                        source_buffer = source_buffer)
+        
+        data_dir = Path(__file__).parent.parent / 'data'
+        # only load the source buffer if no source buffer is given as a parameter
+        if source_buffer is None:
+            self.replay_buffer.source_buffer.load(path = data_dir, name = self.pretrain_encoder_path)
+
+        if env is None:
+            self.update_carla_params(carla_params)
+            self.env = gym.make('barc-v0', **carla_params)
+            self.eps_len = min(replay_buffer_maxsize, eps_len)
+        else:
+            self.env = env
 
         self.expert_cls = expert_cls
         self.carla_params = carla_params
 
         self.expert = self.expert_cls(dt=self.carla_params['dt'], t0=self.carla_params['t0'], track_obj=self.env.get_track())
         self.agent: 'BaseModel' = None
-        self.save_data = save_data
 
         # check whether the user sets latent mode and pretrain mode at the same time
         if latent:
@@ -172,16 +198,6 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
 
         self.save_profile = save_profile
 
-        # an extra parameter
-        self.randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant") # set debug to false to speed up rendering
-        transform = {"camera": self.randomnizor.traditional_randomnize}
-
-        self.replay_buffer: 'data_util.EfficientReplayBuffer' = None
-        self.replay_buffer = data_util.EfficientReplayBuffer(maxsize=replay_buffer_maxsize,
-                                                               lazy_init=True,
-                                                               transform = transform
-                                                               )
-
         self.writer: 'MultiPurposeWriter' = MultiPurposeWriter(model_name=self.agent.model_name,
                                                                log_dir=f"logs/{self.agent.model_name}_{comment or ''}",
                                                                comment=comment or '',
@@ -189,15 +205,6 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                                                                # use_labml_tracker=use_labml_tracker,
                                                                # ntfy_freq=ntfy_freq,
                                                                )
-
-        # Load previous model weights and replay buffer.
-        self.starting_step = starting_step
-        self.agent.to(ptu.device)
-        if starting_step > 0:
-            self.agent.load()
-            self.replay_buffer.load()
-        if pretrain_critic:
-            self.pretrain_critic()
         
         self.domain_list = [DOMAIN7, DOMAIN8] # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
@@ -208,17 +215,31 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
             self.evaluation_list[domain["name"]] = {}
         
         # Reload the agent parameters from the pretrain agent
-        self.agent.load(path=Path(__file__).resolve().parent / 'model_data' / 'pretrained_agents',
+        self.agent.load(path=Path(__file__).resolve().parent / 'model_data',
                     name=self.pretrain_encoder_path)
         
-        profile_path = Path(__file__).parent.parent / 'training_profiles' / f"{self.pretrain_encoder_path}_training_profile.pkl"
-            
-        data_dir = Path(__file__).parent.parent / 'data'
-        self.replay_buffer.load(path = data_dir, name = self.pretrain_encoder_path) # reload the data buffer from the pretrain agent
-        
-        if self.starting_step >= self.mid_freeze:
-            self.agent.freeze_encoders()
-    
+        profile_path = Path(__file__).resolve().parent / 'training_profiles' / f"{self.pretrain_encoder_path}_training_profile.pkl"
+
+        # load the information about the pretrain agent so that initialization of the current matches the pretrained agent
+        if profile_path.exists():
+            with open(profile_path, 'rb') as f:
+                pretrain_agent_profile_data = pickle.load(f)
+            self.pretrain_agent_epochs = pretrain_agent_profile_data['cur_epoch']
+            logger.info(f"the encoder has been trained for {pretrain_agent_profile_data['cur_epoch']} epochs")
+            self.domain_list = pretrain_agent_profile_data["domain_list"]
+            self.eval_domain_list = pretrain_agent_profile_data["eval_domain_list"]
+            logger.info(f"The pretrained agent has the following domain list {[domain['name'] for domain in self.domain_list]}")
+
+            if not to_reload:
+                self.init_beta = pretrain_agent_profile_data["beta"]
+
+                # the list used to store evaluation result
+                self.evaluation_list = {}
+                for domain in (self.domain_list + self.target_domains):
+                    self.evaluation_list[domain["name"]] = {}
+        else:
+            logger.info(f"Warning: the training_profile of the pretrained_encoder is not found at {profile_path}")
+
     def label_domain(self, ob, domain):
         """add the field 'domain_v', the domain probability vector to the ob
          @ob: the observation dictionary returned from the carla-gym environment
@@ -235,7 +256,9 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
             self.agent =visionSafeAC.VisionNaiveRandomization_Visualization(**kwargs)
         else:
             self.agent = visionSafeAC.VisionNaiveRandomization(**kwargs)
-    
+
+        self.agent.to(ptu.device)
+
     def initialize_replay_buffer():
         return None
     
@@ -291,7 +314,7 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                 # logger.debug(f"Action: {ac}, Expert action: {expert_ac}, v_long: {ob['state'][0]}")
                 # self.add_frame(ob=ob, ac_agent=ac, ac_expert=expert_ac, rew=rew, terminated=terminated,
                 #                truncated=truncated, info=info, next_ob=next_ob)
-                self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
+                self.replay_buffer.target_buffer.add_frame(ob, rew, terminated, truncated, info,
                                              action=expert_ac.astype(np.float32),
                                              closed_loop_action=closed_loop_action.astype(np.float32),
                                              next_state=next_ob['state'])
@@ -301,7 +324,7 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                 logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
                 next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
                 fail_counter += 1
-                self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
+                self.replay_buffer.target_buffer.add_frame(ob, rew, terminated, truncated, info,
                                                    action=expert_ac.astype(np.float32),
                                                    closed_loop_action=closed_loop_action.astype(np.float32),
                                                    next_state=next_ob['state'])
@@ -436,8 +459,9 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                 pickle.dump(profile_data, f)
 
     def training_loop(self, n_epochs: int):
+        max_traj_len = 0
 
-        def make_stop_flag(consecutive_steps = 2, success_laps = 5):
+        def make_stop_flag(consecutive_steps = 1, success_laps = 4):
             """early stop mechnism, if we have consecutive evaluations with 
             completed laps larger than success_laps, the experiment is called to early stop,
             i.e. the system is recognized to converge to stable behavior"""
@@ -467,21 +491,17 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
         profile_dir.mkdir(parents=True, exist_ok=True)
         profile_path = profile_dir / f"{self.comment}_training_profile.pkl"
 
+        logger.info("sampling trajectories from the target domain ...")
+        cur_beta = self.init_beta
+        logger.info(f"the curent beta value is {cur_beta}")
+
+        self.sample_trajectories(beta=cur_beta,
+                                         total_length=self.target_domain_len,
+                                         global_step=0)
+
         try:
             for global_step in range(self.starting_step, n_epochs):
                 logger.info(f"Epoch {global_step} / {n_epochs}")
-                # self.agent.step_schedule()
-                # self.sample_trajectory(beta=self.beta ** np.ceil(global_step / self.beta_decay_freq),
-                #                        max_traj_len=self.initial_traj_len if global_step == 0 else self.eps_len)
-
-                if global_step == self.mid_freeze: # check wehther to freeze the encoders or not
-                    self.agent.freeze_encoders()
-
-                cur_beta = self.init_beta * self.beta ** np.ceil(global_step / self.beta_decay_freq)
-                logger.info(f"the curent beta value is {cur_beta}")
-                self.sample_trajectories(beta=cur_beta,
-                                         total_length=self.initial_traj_len if global_step - self.starting_step == 0 else self.eps_len,
-                                         global_step=global_step)
                 
                 self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
 
@@ -491,7 +511,9 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                     continue
             
                 if global_step % self.eval_freq == 0:
-                    evaluate_res = self.evaluate_agent(eval_domains = self.domain_list + self.eval_domain_list)
+                    evaluate_res = self.evaluate_agent(eval_domains = self.target_domains)
+                    max_traj_len = max(max_traj_len, evaluate_res[self.target_domains[0]['name']]['traj_len'])
+
                     # self.evaluate_randomBkg(global_step=global_step)
                     stop_flag = f_stop_flag(evaluate_res)
 
@@ -503,11 +525,7 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                             self.evaluation_list[domain_name][benchmark].append(evaluate_res[domain_name][benchmark])
                     if stop_flag:
                         logger.info("//////////////////////// convergence to successful behavior  ////////////////////// early stop triggered !!!!")
-                        data_dir = Path(__file__).parent.parent / 'data'
-                        self.replay_buffer.export(path = data_dir, name = self.comment) # save the data only when successfully converging to successful behaviors
                         break
-
-                    self.pretrain_save(evaluate_res, cur_beta = cur_beta)
                 
                 if self.latent and global_step % self.visualize_freq == 0:
                     logger.info("collecting data for latent space visualization")
@@ -522,8 +540,8 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                 
                 if self.to_PCA and global_step % self.visualize_freq == 0:
                     self.PCA_visualization(self.domain_list + self.eval_domain_list)
-                
-                self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
+                if self.save_model:
+                    self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
                 self.cur_epoch = global_step
 
                 # store the training profile
@@ -542,23 +560,8 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
                     logger.info(f"Training profile saved to {profile_path}")
 
         finally:
-            benchmark_list = self.evaluation_list[self.domain_list[0]["name"]].keys()
-
-            fig, axis = plt.subplots(1, len(benchmark_list), figsize=(10, 10))
-
-            for i, benchmark in enumerate(benchmark_list):
-                axis[i].set_title(benchmark)
-                for domain in self.domain_list:
-                    axis[i].plot(self.evaluation_list[domain["name"]][benchmark], label = domain["name"])
-                axis[i].legend()
-
-            fig.suptitle(f"{self.agent.model_name}_{self.comment}")
-
-            self.writer.add_figure(tag='val', figure=fig, global_step=0)
-
-            self.writer.flush()
-            logger.info(f"the images are added to logged in")
-            # self.writer.ntfy(message="Training program terminated.")
+            logger.info(f"the maximum achived trajectory length in the target domain system = {max_traj_len}")
+            return max_traj_len
     
     def PCA_visualization(self, collect_domains):
         """Using the PCA technique to visualize the high-dimensional latent vector space"""
@@ -606,10 +609,7 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
         with tqdm(total=total_length, desc='Sampling', unit='steps') as pbar:
             while batch_traj_len < total_length:
 
-                if global_step - self.starting_step <= 2:
-                    max_traj_len = min(int(1024 / len(self.domain_list)) + 1, total_length - batch_traj_len)
-                else:
-                    max_traj_len = min(1024, total_length - batch_traj_len)
+                max_traj_len = min(1024, total_length - batch_traj_len)
 
                 sample_domain = np.random.choice(self.target_domains) # randomly choose one from the target domains
                 traj_len = self.sample_trajectory(domain = sample_domain, beta = beta, pbar=pbar, max_traj_len=max_traj_len)
@@ -635,7 +635,7 @@ class IL_Trainer_CARLA_Perfect_Baseline(IL_Trainer_CARLA_VisionSafeAC):
         
         return min_domain
     
-    def evaluate_agent(self, eval_domains, global_step = 0, max_laps = 7):
+    def evaluate_agent(self, eval_domains, global_step = 0, max_laps = 4):
 
         logger.info("Generalization evaluations starts")
 
@@ -762,13 +762,12 @@ if __name__ == '__main__':
     parser.add_argument('--experimental', action='store_true')
     parser.add_argument("--generalize_test", action = 'store_true')
     parser.add_argument("--data_collect", action = 'store_true')
-    parser.add_argument("--save_profile", action = "store_true", default = True) # whether to save thet training profiles
+    parser.add_argument("--save_profile", action = "store_true", default = False) # whether to save thet training profiles
     parser.add_argument("--reload", action = "store_true", default = False)# whether to reload the existing model with the same name to keep training
     parser.add_argument("--latent", action = "store_true", default = False) # wether to visualize the latent vectors or not
     parser.add_argument("--mid_freeze", type = int, default = np.inf) # at what point to freeze the encoders
     parser.add_argument("--to_PCA", action = 'store_true', default = False) # whether to use the PCA technique to visualize the latent vector space
-    parser.add_argument("--save_data", action = 'store_true', default = True) # whether to save the data buffer or not
-
+    parser.add_argument("--target_domain_len", '-t', type = int, default = 2048) # the length of total trajectory sampled from the target domain
     # parser.add_argument('--ntfy_freq', type=int, default=100)
 
     params = vars(parser.parse_args())
@@ -834,7 +833,7 @@ if __name__ == '__main__':
                           latent = params["latent"],
                           mid_freeze = params["mid_freeze"],
                           to_PCA = params["to_PCA"],
-                          save_data = params['save_data'],
+                          target_domain_len = params["target_domain_len"],
                             **agent_params
                           )
 

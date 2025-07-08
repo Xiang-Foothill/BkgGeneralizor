@@ -22,6 +22,7 @@ from tqdm import tqdm
 from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 import matplotlib.pyplot as plt
+import os, yaml
 
 class WassersteinDiscriminator(Discriminator):
     """Wasserstein discriminator with soft gradient penalty and explicit gradient norms."""
@@ -215,11 +216,48 @@ class WassersteinConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
 
 class DensityEstimator(BaseModel):
     
-    def __init__(self):
+    def __init__(self, sample_distribution : str, pretrain_name : str):
         super().__init__()
         self.has_fit = False
         self.kde_src : KernelDensity = None
         self.kde_tgt : KernelDensity = None
+        self.load_bandwidth_config()
+
+        self.sample_distribution = sample_distribution
+        self.pretrain_name = pretrain_name
+
+    def load_bandwidth_config(self):
+        # Get the directory of this script (i.e., adaptAC.py)
+        current_dir = os.path.dirname(__file__)
+        
+        # Construct the absolute path to the YAML file
+        yaml_path = os.path.join(current_dir, '..', 'config', 'best_bandwidth.yaml')
+
+        # Normalize path (e.g., convert .. to full path)
+        yaml_path = os.path.abspath(yaml_path)
+
+        # Load YAML
+        with open(yaml_path, 'r') as f:
+            config = yaml.safe_load(f)
+
+        self.best_bandwidth_config = config
+
+    def save_bandwidth_config(self):
+        """
+        Save self.best_bandwidth_config to root_directory/config/best_bandwidth.yaml
+        """
+        # Get the directory where this script is located
+        current_dir = os.path.dirname(__file__)
+
+        # Construct the full path to the YAML file
+        yaml_path = os.path.abspath(os.path.join(current_dir, '..', 'config', 'best_bandwidth.yaml'))
+
+        # Write the config dictionary to the YAML file
+        with open(yaml_path, 'w') as f:
+            yaml.dump(self.best_bandwidth_config, f, default_flow_style=False, sort_keys=False)
+
+        print(f"Saved best_bandwidth_config to {yaml_path}")
+
 
     def dis_info_collate(self, dataset: EfficientReplayBuffer):
         state = dataset.retrieve_entire_field("state")[:, -2:]
@@ -227,7 +265,21 @@ class DensityEstimator(BaseModel):
         dis_info = np.concatenate([state, curvature], axis = 1)
         return dis_info
     
-    def best_bandwidth(self, data, start: float, end: float):
+    def best_bandwidth(self, data, start: float, end: float, domain: str):
+        if domain == 'target':
+            key = self.sample_distribution + '_' + str(data.shape[0])
+        elif domain == 'source':
+            key = self.pretrain_name
+        else:
+            raise ValueError(f"the domain variable must be either target or source.")
+        
+        """first try to locate the bandwidth inside self.best_bandwidth_config, if it is found there, directly return it;
+        otherwise, gridsearch it and rewrite it to the config file"""
+
+        if key in self.best_bandwidth_config[domain]:
+            logger.info(f"Found the best bandiwidth configure for {domain} buffer with key {key}")
+            return self.best_bandwidth_config[domain][key]
+
         # Choose a range of candidate bandwidths
         bandwidths = np.linspace(start, end, 10)
 
@@ -237,6 +289,9 @@ class DensityEstimator(BaseModel):
 
         grid.fit(data)  # X = your dataset (source or target)
         best_h = grid.best_params_['bandwidth']
+        
+        self.best_bandwidth_config[domain][key] = float(best_h)
+        self.save_bandwidth_config()
 
         return best_h
     
@@ -254,12 +309,11 @@ class DensityEstimator(BaseModel):
         dis_info_source = self.dis_info_collate(dataset.source_buffer)
         dis_info_target = self.dis_info_collate(dataset.target_buffer)
 
-        # source_bandwidth = self.best_bandwidth(dis_info_source, start = 0.02, end = 0.05)
-        # target_bandwidth = self.best_bandwidth(dis_info_target, start = 0.055, end = 0.08)
+        source_bandwidth = self.best_bandwidth(dis_info_source, start = 0.01, end = 0.2, domain = 'source')
+        target_bandwidth = self.best_bandwidth(dis_info_target, start = 0.01, end = 0.2, domain = 'target')
 
-        source_bandwidth = 0.04 # the empirical value for the dataset of pretrain_bright3
-        # target_bandwidth = 0.15 # the empirical value for the target domain dataset collected with the naive random sampling policy
-        target_bandwidth = 0.055 # the empirical value for first4mDistribution with a size of 512
+        # source_bandwidth = 0.04 # the empirical value for the dataset of pretrain_bright3
+        # target_bandwidth = 0.055 # the empirical value for first4mDistribution with a size of 512
 
         logger.info(f"source domain bandwidth = {source_bandwidth}; target domain bandwidth = {target_bandwidth}")
 
@@ -474,7 +528,7 @@ class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptA
                                            dis_info_dim = ad_agent_params['dis_info_dim'])
         
         self.actor.set_discriminator(self.discriminator)
-        self.density_estimator = DensityEstimator()
+        self.density_estimator = DensityEstimator(sample_distribution = ad_agent_params['sample_distribution'], pretrain_name = ad_agent_params['pretrain_name'])
 
         self.actor.to(ptu.device)
         self.discriminator.to(ptu.device)
@@ -484,7 +538,7 @@ class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptA
     
     def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
         if global_step == 0:
-            self.density_estimator.fit(train_dataset, display_ratio=True) # only fit the estimator at the first epoch
+            self.density_estimator.fit(train_dataset, display_ratio=False) # only fit the estimator at the first epoch
 
         info = defaultdict(lambda: {})
         # first train the discriminator

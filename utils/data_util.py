@@ -595,7 +595,7 @@ class sourceTargetBalanceBuffer():
     
     def __init__(self,
                  maxsize=1_000_000, transform=None, random_eviction: bool = True, constants: dict = None,
-                 lazy_init=True, name=None):
+                 lazy_init=True, name=None, source_buffer = None):
         self.source_buffer : EfficientReplayBuffer = None
         self.target_buffer :EfficientReplayBuffer = None
 
@@ -605,14 +605,16 @@ class sourceTargetBalanceBuffer():
                                         random_eviction = random_eviction,
                                         constants = constants,
                                         name = name)
-        
-        self.source_buffer = EfficientReplayBuffer(maxsize=maxsize,
+        if source_buffer is None:
+            self.source_buffer = EfficientReplayBuffer(maxsize=maxsize,
                                         lazy_init=lazy_init,
                                         transform = transform,
                                         random_eviction = random_eviction,
                                         constants = constants,
                                         name = name)
-    
+        else:
+            self.source_buffer = source_buffer # if the source_buffer is given, directly set it as a class attribute
+
     def balanced_dataloader(self, batch_size: int = 64, shuffle: bool = True, num_workers: int = 0, manifest=None) -> DataLoader:
 
         """The resulted dataloader contains the same amount of data from
@@ -653,6 +655,10 @@ class sourceTargetBalanceBuffer():
         )
 
         return series_loader
+    
+    def dataloader(self, batch_size: int = 64, shuffle: bool = True, num_workers: int = 0, manifest=None):
+        """the default data loaderis the series loader"""
+        return self.series_dataloader(batch_size = batch_size, shuffle = shuffle, num_workers = num_workers, manifest = manifest)
     
 class EfficientReplayBufferPN_nopreprocess(EfficientReplayBufferPN):
     def preprocess(self):

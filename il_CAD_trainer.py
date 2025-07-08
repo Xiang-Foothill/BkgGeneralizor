@@ -96,10 +96,15 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                        beta=0.25,
                        pretrain_critic=False,
                        beta_decay_freq=5,
-                       save_profile = True,
+                       save_profile = False,
+                       save_model = False,
                        to_reload = False,
                        target_domain_len = 5000,
                        discriminator_type = 'no_condition',
+                       source_buffer = None,
+                       env = None,
+                       visualize = False,
+                       sample_distribution = 'naive_random',
                        **agent_params):
         """
 
@@ -122,8 +127,10 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         self.pretrain_encoder_path = PRETRAIN_BRIGHT3
         self.target_domain_len = target_domain_len
         self.target_domains = [DOMAIN12]
-
+        self.save_model = save_model
+        self.visualize = visualize
         self.discriminator_type = discriminator_type
+        self.sample_distribution = sample_distribution
 
         self.cur_epoch = 0
         self.best_avg_lap_time = np.inf
@@ -152,14 +159,20 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         self.replay_buffer: 'data_util.sourceTargetBalanceBuffer' = None
         self.replay_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
                                         lazy_init=True,
-                                        transform = transform)
+                                        transform = transform,
+                                        source_buffer = source_buffer)
         
         data_dir = Path(__file__).parent.parent / 'data'
-        self.replay_buffer.source_buffer.load(path = data_dir, name = self.pretrain_encoder_path)
+        # only load the source buffer if no source buffer is given as a parameter
+        if source_buffer is None:
+            self.replay_buffer.source_buffer.load(path = data_dir, name = self.pretrain_encoder_path)
 
-        self.update_carla_params(carla_params)
-        self.env = gym.make('barc-v0', **carla_params)
-        self.eps_len = min(replay_buffer_maxsize, eps_len)
+        if env is None:
+            self.update_carla_params(carla_params)
+            self.env = gym.make('barc-v0', **carla_params)
+            self.eps_len = min(replay_buffer_maxsize, eps_len)
+        else:
+            self.env = env
 
         self.expert = expert_cls(dt=carla_params['dt'], t0=carla_params['t0'], track_obj=self.env.get_track())
         self.agent: 'BaseModel' = None
@@ -183,7 +196,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             else:
                 logger.warning(f"No training profile found at {profile_path}. Starting fresh.")
 
-        profile_path = Path(__file__).parent.parent / 'training_profiles' / f"{self.pretrain_encoder_path}_training_profile.pkl"
+        profile_path = Path(__file__).resolve().parent / 'training_profiles' / f"{self.pretrain_encoder_path}_training_profile.pkl"
         # load the information about the pretrain agent so that initialization of the current matches the pretrained agent
         if profile_path.exists():
             with open(profile_path, 'rb') as f:
@@ -245,7 +258,9 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             actor_cls = VisionProjConditionAdversarialAC
         if self.discriminator_type == 'cat_condition_reweight':
             actor_cls = VisionConditionAdversarialReweightAdaptAC
-        
+            ad_agent_params['sample_distribution'] = self.sample_distribution # pass in the sample distribution of the best bandwidth initialization
+            ad_agent_params['pretrain_name'] = self.pretrain_encoder_path
+            
         self.agent = actor_cls(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
         logger.debug(f"the loaded model is {self.agent.model_name}")
 
@@ -359,7 +374,14 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
 
         while traj_len < max_traj_len:
             self.label_domain(ob, domain)
-            next_ob = self.env.first4mDistribution_random_obs() # choose the random sample distribution policy
+            if self.sample_distribution == 'naive_random':
+                next_ob = self.env.naive_random_obs()
+            elif self.sample_distribution == 'first_4m_random':
+                next_ob = self.env.first4mDistribution_random_obs() # choose the random sample distribution policy
+            elif self.sample_distribution == 'middle_3m_random':
+                next_ob = self.env.middle3mDistribution_random_obs()
+            else:
+                raise ValueError(f"the sample_distribution {self.sample_distribution} is not available")
 
             #some null observation without specific meaning but only for data structure consistency
             rew, expert_ac, closed_loop_action = 0.0, np.zeros((2,)), np.zeros((2,))
@@ -478,6 +500,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         return traj_len
     
     def training_loop(self, n_epochs: int):
+        max_traj_len = 0
 
         def make_stop_flag(consecutive_steps = 1, success_laps = 4):
             """early stop mechnism, if we have consecutive evaluations with 
@@ -508,7 +531,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         # before starting tuning the model for domain adpatation, do the evaluation for different domains
         logger.info("Pretraining Evaluation .......")
         self.evaluate_agent(eval_domains = self.target_domains)
-        # self.PCA_visualization(visualization_list, display_full_name = False)
+        if self.visualize:
+            self.PCA_visualization(visualization_list, display_full_name = False)
 
         # Directory for saving training profiles
         profile_dir = Path(__file__).parent.parent / 'training_profiles'
@@ -536,7 +560,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                 self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
                 self.train_module(self.agent, global_step)
 
-                if global_step % self.visualize_freq == 0:
+                if global_step % self.visualize_freq == 0 and self.visualize:
                     self.PCA_visualization(visualization_list, display_full_name=False)
 
                 if self.no_saving:
@@ -544,6 +568,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             
                 if global_step % self.eval_freq == 0:
                     evaluate_res = self.evaluate_agent(eval_domains = self.target_domains, global_step = global_step) # only evaluate the agent's performance in the target domain
+                    max_traj_len = max(max_traj_len, evaluate_res[self.target_domains[0]['name']]['traj_len'])
+
                     # self.evaluate_randomBkg(global_step=global_step)
                     stop_flag = f_stop_flag(evaluate_res)
 
@@ -555,11 +581,14 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                             self.evaluation_list[domain_name][benchmark].append(evaluate_res[domain_name][benchmark])
                     if stop_flag:
                         logger.info("Final visualization for the successfull convergence ...")
-                        self.PCA_visualization(visualization_list)
+                        if self.visualize:
+                            self.PCA_visualization(visualization_list)
                         logger.info("//////////////////////// convergence to successful behavior  ////////////////////// early stop triggered !!!!")
                         break
-                
-                self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
+
+                if self.save_model:
+                    self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
+
                 self.cur_epoch = global_step
 
                 # store the training profile
@@ -575,23 +604,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                     logger.info(f"Training profile saved to {profile_path}")
 
         finally:
-            benchmark_list = self.evaluation_list[self.domain_list[0]["name"]].keys()
-
-            fig, axis = plt.subplots(1, len(benchmark_list), figsize=(10, 10))
-
-            for i, benchmark in enumerate(benchmark_list):
-                axis[i].set_title(benchmark)
-                for domain in self.domain_list:
-                    axis[i].plot(self.evaluation_list[domain["name"]][benchmark], label = domain["name"])
-                axis[i].legend()
-
-            fig.suptitle(f"{self.agent.model_name}_{self.comment}")
-
-            self.writer.add_figure(tag='val', figure=fig, global_step=0)
-
-            self.writer.flush()
-            logger.info(f"the images are added to logged in")
-            # self.writer.ntfy(message="Training program terminated.")
+            logger.info(f"the maximum achived trajectory length in the target domain system = {max_traj_len}")
+            return max_traj_len
     
     def PCA_visualization(self, collect_domains, display_full_name=True):
         """Using the PCA technique to visualize the high-dimensional latent vector space"""
@@ -794,7 +808,7 @@ if __name__ == '__main__':
     # parser.add_argument('--ntfy_freq', type=int, default=100)
     parser.add_argument("--target_domain_len", '-t', type = int, default = 2048) # the length of total trajectory sampled from the target domain
     parser.add_argument("--discriminator", '-d', type = str, default = 'no_condition', choices = ('no_condition', 'cat_condition', 'proj_condition','null', 'cat_condition_reweight'))
-    
+    parser.add_argument("--sample_distribution", '-s', type = str, default = 'naive_random', choices = ('naive_random', 'first_4m_random', 'middle_3m_random'))
     params = vars(parser.parse_args())
 
     if params['experimental']:
@@ -860,6 +874,7 @@ if __name__ == '__main__':
                           to_reload = params["reload"],
                           target_domain_len = params["target_domain_len"],
                           discriminator_type = params['discriminator'],
+                          sample_distribution = params['sample_distribution'],
                           **agent_params
                           )
 

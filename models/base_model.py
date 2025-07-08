@@ -123,6 +123,7 @@ class BaseModel(nn.Module):
     def export(self, path=None, name=None):
         if not Path(path).exists():
             os.makedirs(path, exist_ok=True)
+        logger.debug(Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt")
         torch.save(self.state_dict(), Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt")
 
     def load(self, path=None, name=None):

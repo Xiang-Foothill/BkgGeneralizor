@@ -319,7 +319,7 @@ class BarcEnv(gym.Env):
             return
         self.visualizer.step(self.sim_state)
 
-    def get_random_obs(self) -> Dict[str, np.ndarray]:
+    def naive_random_obs(self) -> Dict[str, np.ndarray]:
         random_state = VehicleState(t=0.0,
                                           p=ParametricPose(s=np.random.uniform(0.1, self.track_obj.track_length - 1),
                                                            x_tran=np.random.uniform(
@@ -355,7 +355,7 @@ class BarcEnv(gym.Env):
             s = np.random.uniform(low = 0.0, high = 4.0) # sample along the first 4 meters of the trajectory
         else:
             s = np.random.uniform(low = 4.0, high = self.track_obj.track_length - 1.0) # sample along the rest of the trajectory other than the first 4 meters
-            
+
         random_state = VehicleState(t=0.0,
                                           p=ParametricPose(s=s,
                                                            x_tran=np.random.uniform(
@@ -383,6 +383,52 @@ class BarcEnv(gym.Env):
             })
         return ob
 
+    def middle3mDistribution_random_obs(self) -> Dict[str, np.ndarray]:
+        """
+        Randomly sample observations in the BARC environment.
+        With 70% probability, sample a vehicle state from the middle 3m of the track (4.0 <= s <= 7.0).
+        Otherwise, sample from the rest of the track (0.0 <= s < 4.0 or 7.0 < s <= track_length - 1.0).
+        """
+        if np.random.uniform(0., 1.) < 0.7:
+            s = np.random.uniform(4.0, 7.0)
+        else:
+            # Sample from the union of [0.0, 4.0) and (7.0, track_length - 1.0]
+            total_length = self.track_obj.track_length
+            lower_span = 4.0
+            upper_span = total_length - 7.0 - 1.0  # exclude 1m from end as in original
+
+            # Choose whether to sample before 4.0 or after 7.0
+            if np.random.rand() < lower_span / (lower_span + upper_span):
+                s = np.random.uniform(0.0, 4.0)
+            else:
+                s = np.random.uniform(7.0, total_length - 1.0)
+
+        random_state = VehicleState(t=0.0,
+                                          p=ParametricPose(s=s,
+                                                           x_tran=np.random.uniform(
+                                                               -self.track_obj.half_width / 1.2,
+                                                               self.track_obj.half_width / 1.2),
+                                                           e_psi=np.random.uniform(-np.pi / 6, np.pi / 6), ),
+                                          # e=OrientationEuler(psi=0),
+                                          v=BodyLinearVelocity(v_long=np.random.uniform(0.5, 2), v_tran=0),
+                                          w=BodyAngularVelocity(w_psi=0))
+        self.track_obj.local_to_global_typed(random_state)
+
+        ob = {
+            'gps': np.array([random_state.x.x, random_state.x.y, random_state.e.psi], dtype=np.float32),
+            'velocity': np.array([random_state.v.v_long, random_state.v.v_tran, random_state.w.w_psi],
+                                 dtype=np.float32),
+            'state': np.array([random_state.v.v_long, random_state.v.v_tran, random_state.w.w_psi,
+                               random_state.p.s, random_state.p.x_tran, random_state.p.e_psi], dtype=np.float32),
+            'curvature': self.curvature_in_horizon(random_state),
+        }
+
+        if self.enable_camera:
+            camera, semantics = self.camera_bridge.query_rgb(random_state)
+            ob.update({
+                'camera': camera,
+            })
+        return ob
 
     def _get_obs(self) -> Dict[str, np.ndarray]:
         ob = {
