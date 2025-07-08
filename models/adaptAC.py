@@ -554,3 +554,112 @@ class VisionConditionAdversarialReweightAdaptAC(VisionConditionAdversarialAdaptA
                 for k2, v2 in v1.items():
                     info[k1][k2] = v2
         return info
+
+class PseudoTargetGenerator():
+    """Generator for pseudo target domain examples by grid searching among a set of discrete perturbation functions;
+    The perturbation function that can cause the largest domain confusion will be applied to create pseudo observations"""
+
+    def __init__(self, target_buffer_max_size : int):
+        self.tgt_buffer_max_size = target_buffer_max_size
+    
+
+    def fill_tgt_pseudo(self, data_buffer: sourceTargetBalanceBuffer, visual_encoder: nn.Module, discriminator: nn.Module):
+        """Fill in the target_buffer if target buffer size is smaller than tgt_buffer_max_size"""
+        source_buffer = data_buffer.source_buffer
+        target_buffer = data_buffer.target_buffer
+
+        if target_buffer.size >= self.tgt_buffer_max_size:
+            return
+
+        while target_buffer.size < self.tgt_buffer_max_size:
+            source_example = source_buffer[np.random.randint(low=0, high=source_buffer.size)]
+
+            img = source_example['camera']
+            state = source_example['state']
+            curvature = source_example['curvature']
+            label = source_example['domain_indicator']  # assumed to be 0 for source
+
+            logger.debug(f"the shape of the extracted image is {img.shape}")
+
+            # Step 1: Grid search over perturbation set to find the most confusing one
+            max_loss = -float('inf')
+            best_img = None
+
+            for T in self.perturbation_set:
+                img_t = T(img)
+                loss = self.domain_confusion(img_t, state, curvature, label,
+                                             visual_encoder=visual_encoder,
+                                             discriminator=discriminator)
+                if loss > max_loss:
+                    max_loss = loss
+                    best_img = img_t
+
+            # Step 2: Deep copy example and replace image with best_img
+            pseudo_example = copy.deepcopy(source_example)
+            pseudo_example['camera'] = best_img
+            pseudo_example['domain_indicator'] = 0  # overwrite label to "target"
+
+            # Step 3: Add to target buffer
+            target_buffer.append(batched=False, **pseudo_example)
+    
+    def domain_confusion(self, img, state, curvature, label, visual_encoder : nn.Module, discriminator : Discriminator):
+        """Apply the visual encoder and the discriminator to find the domain confusion loss"""
+
+        # transform to torch tensors
+        img, state, curvature, domain_indicator = ptu.from_numpy(img), ptu.from_numpy(state), ptu.from_numpy(curvature), ptu.from_numpy(domain_indicator)
+
+        # use the visual encoder to find the latent vector
+        img = img.permute(0, 3, 1, 2) / 255.
+        l = visual_encoder(img)
+
+        dis_info = discriminator.discriminative_info(state, curvature)
+        outputs = discriminator(l, dis_info)
+        loss = discriminator.loss(outputs, label)
+        loss = ptu.to_numpy(loss)
+
+        logger.debug(f"the current los value is {loss}")
+
+        return loss
+
+class VisionConditionAdversarialPseudoAdaptAC(VisionConditionAdversarialAdaptAC):
+    """After the first epoch, pseudo target domain examples will be generated and added to the target domain data buffer
+    to deal with the case with limited data amount from the target domain"""
+
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, pretrain_agent_params: dict, ad_agent_params: dict):
+        """
+        @ pretrain_encoder_path: the path to load the weight of the pretrained agent (the agent that will be adapted to the new environment)
+        @ pretrain_agent_params: the parameters of the pretrained encoder
+        @ ad_agent_params: the parameters of the discriminators, and some relevant modifications that should be made to the pretrain_agent params
+        Model Input: states
+        Model Output: actions
+
+        Loss: MSE
+        """
+        super().__init__(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
+        self.pseudoTgtGenerator = PseudoTargetGenerator(target_buffer_max_size=ad_agent_params['target_buffer_maxsize'])
+    
+
+    def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
+        info = defaultdict(lambda: {})
+
+        # first train the discriminator
+        logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
+        discriminator_info = self.discriminator.fit(n_epochs = n_epochs * 3, train_dataset = train_dataset, actor = self.actor)
+
+        if global_step == 0:
+
+            self.actor.freeze()
+            self.discriminator.freeze()
+            self.pseudoTgtGenerator.fill_tgt_pseudo(data_buffer = train_dataset, visual_encoder = self.actor.resnet, discriminator = self.discriminator)
+            self.actor.unfreeze()
+            self.discriminator.unfreeze()
+
+        #train the actor
+        logger.info(f"///// Training the actor ///// [{self.actor.model_name}]")
+        actor_info = self.actor.fit(train_dataset=train_dataset, n_epochs = n_epochs)
+
+        for d in (discriminator_info, actor_info):
+            for k1, v1 in d.items():
+                for k2, v2 in v1.items():
+                    info[k1][k2] = v2
+        return info

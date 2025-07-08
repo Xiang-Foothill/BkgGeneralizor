@@ -26,7 +26,7 @@ import models.feedforward
 from models.visionSafeAC import VisionNaiveMultihead, VisionNaiveRandomization, VisionCompleteMultiHead, VisionAdversarialAdaptAC, VisionAdversarialActor, VisionConditionAdversarialAdaptAC, VisionNullAdaptAC, VisionProjConditionAdversarialAC
 from models.base_model import BaseModel
 from domain_randomnization.randomnizor import BkgRandomnizer, linProgRandomnizer, ContrastRandomnizer
-from models.adaptAC import WassersteinAdversarialAdaptAC, WassersteinConditionAdversarialAdaptAC, VisionConditionAdversarialReweightAdaptAC
+from models.adaptAC import WassersteinAdversarialAdaptAC, WassersteinConditionAdversarialAdaptAC, VisionConditionAdversarialReweightAdaptAC, VisionConditionAdversarialPseudoAdaptAC
 
 from utils import data_util
 from torch.utils.data import DataLoader
@@ -260,6 +260,9 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             actor_cls = VisionConditionAdversarialReweightAdaptAC
             ad_agent_params['sample_distribution'] = self.sample_distribution # pass in the sample distribution of the best bandwidth initialization
             ad_agent_params['pretrain_name'] = self.pretrain_encoder_path
+        if self.discriminator_type == 'cat_condition_pseudo':
+            actor_cls = VisionConditionAdversarialPseudoAdaptAC
+            ad_agent_params['target_buffer_max_size'] = 2048
             
         self.agent = actor_cls(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
         logger.debug(f"the loaded model is {self.agent.model_name}")
