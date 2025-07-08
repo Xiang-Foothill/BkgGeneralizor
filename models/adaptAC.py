@@ -569,38 +569,42 @@ class PseudoTargetGenerator():
         target_buffer = data_buffer.target_buffer
 
         if target_buffer.size >= self.tgt_buffer_max_size:
+            logger.info("The target data buffer has achieved the maximum size. Pseudo examples generation is skipped...")
             return
+        
+        logger.info("Generating pseudo target examples ...")
+        with tqdm(total=self.tgt_buffer_max_size - target_buffer.size(), desc='Sampling', unit='steps') as pbar:
+            while target_buffer.size < self.tgt_buffer_max_size:
+                source_example = source_buffer[np.random.randint(low=0, high=source_buffer.size)]
 
-        while target_buffer.size < self.tgt_buffer_max_size:
-            source_example = source_buffer[np.random.randint(low=0, high=source_buffer.size)]
+                img = source_example['camera']
+                state = source_example['state']
+                curvature = source_example['curvature']
+                label = source_example['domain_indicator']  # assumed to be 0 for source
 
-            img = source_example['camera']
-            state = source_example['state']
-            curvature = source_example['curvature']
-            label = source_example['domain_indicator']  # assumed to be 0 for source
+                logger.debug(f"the shape of the extracted image is {img.shape}")
 
-            logger.debug(f"the shape of the extracted image is {img.shape}")
+                # Step 1: Grid search over perturbation set to find the most confusing one
+                max_loss = -float('inf')
+                best_img = None
 
-            # Step 1: Grid search over perturbation set to find the most confusing one
-            max_loss = -float('inf')
-            best_img = None
+                for T in self.perturbation_set:
+                    img_t = T(img)
+                    loss = self.domain_confusion(img_t, state, curvature, label,
+                                                visual_encoder=visual_encoder,
+                                                discriminator=discriminator)
+                    if loss > max_loss:
+                        max_loss = loss
+                        best_img = img_t
 
-            for T in self.perturbation_set:
-                img_t = T(img)
-                loss = self.domain_confusion(img_t, state, curvature, label,
-                                             visual_encoder=visual_encoder,
-                                             discriminator=discriminator)
-                if loss > max_loss:
-                    max_loss = loss
-                    best_img = img_t
+                # Step 2: Deep copy example and replace image with best_img
+                pseudo_example = copy.deepcopy(source_example)
+                pseudo_example['camera'] = best_img
+                pseudo_example['domain_indicator'] = 0  # overwrite label to "target"
 
-            # Step 2: Deep copy example and replace image with best_img
-            pseudo_example = copy.deepcopy(source_example)
-            pseudo_example['camera'] = best_img
-            pseudo_example['domain_indicator'] = 0  # overwrite label to "target"
-
-            # Step 3: Add to target buffer
-            target_buffer.append(batched=False, **pseudo_example)
+                # Step 3: Add to target buffer
+                target_buffer.append(batched=False, **pseudo_example)
+                pbar.update(1)
     
     def domain_confusion(self, img, state, curvature, label, visual_encoder : nn.Module, discriminator : Discriminator):
         """Apply the visual encoder and the discriminator to find the domain confusion loss"""
