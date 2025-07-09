@@ -559,11 +559,15 @@ class PseudoTargetGenerator():
     """Generator for pseudo target domain examples by grid searching among a set of discrete perturbation functions;
     The perturbation function that can cause the largest domain confusion will be applied to create pseudo observations"""
 
+    def none_ptb(self, img):
+        """return a deepcopy of the original image"""
+        return img.copy()
+
     def __init__(self, target_buffer_max_size : int):
         self.tgt_buffer_max_size = target_buffer_max_size
-    
+        self.perturbation_set = [self.none_ptb]
 
-    def fill_tgt_pseudo(self, data_buffer: sourceTargetBalanceBuffer, visual_encoder: nn.Module, discriminator: nn.Module):
+    def fill_tgt_pseudo(self, data_buffer: sourceTargetBalanceBuffer, visual_encoder: nn.Module, discriminator: nn.Module, debug = False):
         """Fill in the target_buffer if target buffer size is smaller than tgt_buffer_max_size"""
         source_buffer = data_buffer.source_buffer
         target_buffer = data_buffer.target_buffer
@@ -573,20 +577,20 @@ class PseudoTargetGenerator():
             return
         
         logger.info("Generating pseudo target examples ...")
-        with tqdm(total=self.tgt_buffer_max_size - target_buffer.size(), desc='Sampling', unit='steps') as pbar:
+        with tqdm(total=self.tgt_buffer_max_size - target_buffer.size, desc='Sampling', unit='steps') as pbar:
             while target_buffer.size < self.tgt_buffer_max_size:
                 source_example = source_buffer[np.random.randint(low=0, high=source_buffer.size)]
 
-                img = source_example['camera']
-                state = source_example['state']
-                curvature = source_example['curvature']
-                label = source_example['domain_indicator']  # assumed to be 0 for source
-
-                logger.debug(f"the shape of the extracted image is {img.shape}")
+                img = np.expand_dims(source_example['camera'], axis=0)
+                state = np.expand_dims(source_example['state'], axis=0)
+                curvature = np.expand_dims(source_example['curvature'], axis=0)
+                label = np.expand_dims(source_example['domain_indicator'], axis=0)
+                # label = source_example['domain_indicator']
+                # logger.debug(f"Shapes — img: {img.shape}, state: {state.shape}, curvature: {curvature.shape}, label: {label.shape}")
 
                 # Step 1: Grid search over perturbation set to find the most confusing one
                 max_loss = -float('inf')
-                best_img = None
+                best_img = copy.deepcopy(img)
 
                 for T in self.perturbation_set:
                     img_t = T(img)
@@ -599,18 +603,29 @@ class PseudoTargetGenerator():
 
                 # Step 2: Deep copy example and replace image with best_img
                 pseudo_example = copy.deepcopy(source_example)
-                pseudo_example['camera'] = best_img
-                pseudo_example['domain_indicator'] = 0  # overwrite label to "target"
+                pseudo_example['camera'] = best_img[0]
+                pseudo_example['domain_indicator'] = np.asarray([0.])  # overwrite label to "target"
 
                 # Step 3: Add to target buffer
-                target_buffer.append(batched=False, **pseudo_example)
+                filtered_example = {
+                    k: v for k, v in pseudo_example.items() if k in target_buffer.fields
+                }
+                target_buffer.append(batched=False, **filtered_example)
                 pbar.update(1)
+
+                if debug:
+                    # 🔍 Debug visualization of best perturbed image
+                    plt.imshow(best_img[0].astype(np.uint8))
+                    plt.title("Best Perturbed Image")
+                    plt.axis('off')
+                    plt.pause(1.0)     # pause for 1 second to view image
+                    plt.clf() 
     
     def domain_confusion(self, img, state, curvature, label, visual_encoder : nn.Module, discriminator : Discriminator):
         """Apply the visual encoder and the discriminator to find the domain confusion loss"""
 
         # transform to torch tensors
-        img, state, curvature, domain_indicator = ptu.from_numpy(img), ptu.from_numpy(state), ptu.from_numpy(curvature), ptu.from_numpy(domain_indicator)
+        img, state, curvature, label = ptu.from_numpy(img), ptu.from_numpy(state), ptu.from_numpy(curvature), ptu.from_numpy(label)
 
         # use the visual encoder to find the latent vector
         img = img.permute(0, 3, 1, 2) / 255.
@@ -618,10 +633,8 @@ class PseudoTargetGenerator():
 
         dis_info = discriminator.discriminative_info(state, curvature)
         outputs = discriminator(l, dis_info)
-        loss = discriminator.loss(outputs, label)
+        loss = discriminator.loss(outputs, (label,))[0]
         loss = ptu.to_numpy(loss)
-
-        logger.debug(f"the current los value is {loss}")
 
         return loss
 
@@ -640,7 +653,7 @@ class VisionConditionAdversarialPseudoAdaptAC(VisionConditionAdversarialAdaptAC)
         Loss: MSE
         """
         super().__init__(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
-        self.pseudoTgtGenerator = PseudoTargetGenerator(target_buffer_max_size=ad_agent_params['target_buffer_maxsize'])
+        self.pseudoTgtGenerator = PseudoTargetGenerator(target_buffer_max_size=ad_agent_params['target_buffer_max_size'])
     
 
     def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
@@ -654,7 +667,7 @@ class VisionConditionAdversarialPseudoAdaptAC(VisionConditionAdversarialAdaptAC)
 
             self.actor.freeze()
             self.discriminator.freeze()
-            self.pseudoTgtGenerator.fill_tgt_pseudo(data_buffer = train_dataset, visual_encoder = self.actor.resnet, discriminator = self.discriminator)
+            self.pseudoTgtGenerator.fill_tgt_pseudo(data_buffer = train_dataset, visual_encoder = self.actor.resnet, discriminator = self.discriminator, debug = True)
             self.actor.unfreeze()
             self.discriminator.unfreeze()
 
