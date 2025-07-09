@@ -262,7 +262,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             ad_agent_params['pretrain_name'] = self.pretrain_encoder_path
         if self.discriminator_type == 'cat_condition_pseudo':
             actor_cls = VisionConditionAdversarialPseudoAdaptAC
-            ad_agent_params['target_buffer_max_size'] = 2048
+            ad_agent_params['target_buffer_max_size'] = 1024
             
         self.agent = actor_cls(pretrain_agent = pretrain_agent, pretrain_agent_params = pretrain_agent_params, ad_agent_params = ad_agent_params)
         logger.debug(f"the loaded model is {self.agent.model_name}")

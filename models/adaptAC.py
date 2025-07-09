@@ -600,7 +600,7 @@ class PseudoTargetGenerator():
         
         return f_contrast
 
-    def make_composite_perturbations(*function_lists: List[Callable]) -> List[Callable]:
+    def make_composite_perturbations(self, *function_lists: List[Callable]) -> List[Callable]:
         """
         Create all possible compositions of one function from each input function list.
 
@@ -625,8 +625,8 @@ class PseudoTargetGenerator():
         self.tgt_buffer_max_size = target_buffer_max_size
 
         # Define the factors you want to use
-        brightness_factors = np.linspace(0.1, 1.5, 10)
-        contrast_factors = [0.8, 1.0, 1.2]
+        brightness_factors = np.linspace(0.35, 1.3, 10)
+        contrast_factors = [0.7, 0.8, 1.0, 1.1, 1.2]
 
         # Create lists of brightness and contrast perturbation functions
         f_brightness_array = [self.make_f_brightness(factor=f) for f in brightness_factors]
@@ -645,9 +645,10 @@ class PseudoTargetGenerator():
             return
         
         logger.info("Generating pseudo target examples ...")
-        with tqdm(total=self.tgt_buffer_max_size - target_buffer.size, desc='Sampling', unit='steps') as pbar:
+        bar_len = self.tgt_buffer_max_size - target_buffer.size
+        with tqdm(total=bar_len, desc='Sampling', unit='steps') as pbar:
             while target_buffer.size < self.tgt_buffer_max_size:
-                source_example = source_buffer[np.random.randint(low=0, high=source_buffer.size)]
+                source_example = source_buffer.get_item_no_transform(np.random.randint(low=0, high=source_buffer.size))
 
                 img = np.expand_dims(source_example['camera'], axis=0)
                 state = np.expand_dims(source_example['state'], axis=0)
@@ -682,7 +683,7 @@ class PseudoTargetGenerator():
                 pbar.update(1)
 
                 if debug:
-                    # 🔍 Debug visualization of best perturbed image
+                    # Debug visualization of best perturbed image
                     plt.imshow(best_img[0].astype(np.uint8))
                     plt.title("Best Perturbed Image")
                     plt.axis('off')
@@ -735,7 +736,7 @@ class VisionConditionAdversarialPseudoAdaptAC(VisionConditionAdversarialAdaptAC)
 
             self.actor.freeze()
             self.discriminator.freeze()
-            self.pseudoTgtGenerator.fill_tgt_pseudo(data_buffer = train_dataset, visual_encoder = self.actor.resnet, discriminator = self.discriminator, debug = True)
+            self.pseudoTgtGenerator.fill_tgt_pseudo(data_buffer = train_dataset, visual_encoder = self.actor.resnet, discriminator = self.discriminator, debug = False)
             self.actor.unfreeze()
             self.discriminator.unfreeze()
 

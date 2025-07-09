@@ -209,7 +209,8 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
     num_seeds = len(seeds)
 
     max_traj_lens = {}
-    tgt_domain_sizes = [2048, 1024, 512, 256, 128]
+    tgt_domain_sizes = [2048, 1024, 512, 256, 213, 170, 128]
+    # tgt_domain_sizes = [512, 256, 128]
     # tgt_domain_sizes = [1024]
     # trainer_clses = [
     #     (IL_Trainer_CARLA_Perfect_Baseline, None),
@@ -218,10 +219,17 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
     #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition', 'sample_distribution': 'middle_3m_random'})
     # ]
 
+    # trainer_clses = [
+    #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'naive_random'}),
+    #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'first_4m_random'}),
+    #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'middle_3m_random'})
+    # ]
+
     trainer_clses = [
-        (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'naive_random'}),
-        (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'first_4m_random'}),
-        (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'middle_3m_random'})
+        (IL_Trainer_CARLA_Perfect_Baseline, None),
+        (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_pseudo', 'sample_distribution': 'naive_random'}),
+        (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_pseudo', 'sample_distribution': 'first_4m_random'}),
+        (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_pseudo', 'sample_distribution': 'middle_3m_random'})
     ]
 
     common_params = make_common_params(pretrain_model)
@@ -362,6 +370,6 @@ def visualize_data_size_experiment_with_variance(file_name):
 
 if __name__ == '__main__':
     pretrain_model = PRETRAIN_BRIGHT3
-    title = "datasize_exp_reweight_res1"
+    title = "datasize_exp_pseudo_res1"
     data_size_experiment_with_variance(pretrain_model, title)
     # visualize_data_size_experiment_with_variance(title)

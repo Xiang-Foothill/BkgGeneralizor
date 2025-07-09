@@ -110,6 +110,14 @@ class EfficientReplayBuffer(Dataset, ABC):
 
         return {**data, **self.constants}
 
+    def get_item_no_transform(self, index_ext):
+        """get the item at index position without applying any transform to the item"""
+        assert index_ext in range(self.size), "Index out of range"
+        index_int = (index_ext + self.left) % self.maxsize
+        data = {}
+        for k in self.fields.keys():
+            data[k] = self.fields[k][index_int]
+        return {**data, **self.constants} 
 
     def add_frame(self, obs, rews, terminated, truncated, info, **kwargs):
         self.append(batched=False,
