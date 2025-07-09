@@ -23,6 +23,8 @@ from sklearn.neighbors import KernelDensity
 from sklearn.model_selection import GridSearchCV
 import matplotlib.pyplot as plt
 import os, yaml
+from typing import List, Callable
+from itertools import product
 
 class WassersteinDiscriminator(Discriminator):
     """Wasserstein discriminator with soft gradient penalty and explicit gradient norms."""
@@ -562,10 +564,76 @@ class PseudoTargetGenerator():
     def none_ptb(self, img):
         """return a deepcopy of the original image"""
         return img.copy()
+    
+    def make_f_brightness(self, factor : float):
+        """function maker for perturbation change through brightness change"""
 
-    def __init__(self, target_buffer_max_size : int):
+        def f_brightness(image):
+            image_t = image * factor
+
+            # Clip values to [0, 255]
+            image_t = np.clip(image_t, 0, 255).astype(np.uint8)
+
+            return image_t
+        
+        return f_brightness
+    
+    def make_f_contrast(self, factor: float):
+        """
+        Function maker for perturbation through contrast adjustment.
+        Contrast is changed by scaling pixel deviations from the mean.
+        
+        @param factor: float, contrast factor (>1 increases contrast, <1 decreases contrast)
+        @return: function that modifies contrast of input image
+        """
+        def f_contrast(image):
+            # Compute per-image mean (broadcast-safe for RGB)
+            mean = np.mean(image, axis=(1, 2), keepdims=True) if image.ndim == 4 else np.mean(image, keepdims=True)
+
+            # Scale deviation from mean
+            image_t = (image - mean) * factor + mean
+
+            # Clip and cast
+            image_t = np.clip(image_t, 0, 255).astype(np.uint8)
+
+            return image_t
+        
+        return f_contrast
+
+    def make_composite_perturbations(*function_lists: List[Callable]) -> List[Callable]:
+        """
+        Create all possible compositions of one function from each input function list.
+
+        Args:
+            *function_lists: Variable number of lists, each containing functions (e.g., brightness, contrast, etc.)
+
+        Returns:
+            List of composed functions. Each composed function applies one function from each list in sequence.
+        """
+        T = []
+
+        for function_combo in product(*function_lists):  # Cartesian product of all function arrays
+            def composed_fn(img, funcs=function_combo):  # bind funcs to avoid late binding
+                for f in funcs:
+                    img = f(img)
+                return img
+            T.append(composed_fn)
+
+        return T
+
+    def __init__(self, target_buffer_max_size: int):
         self.tgt_buffer_max_size = target_buffer_max_size
-        self.perturbation_set = [self.none_ptb]
+
+        # Define the factors you want to use
+        brightness_factors = np.linspace(0.1, 1.5, 10)
+        contrast_factors = [0.8, 1.0, 1.2]
+
+        # Create lists of brightness and contrast perturbation functions
+        f_brightness_array = [self.make_f_brightness(factor=f) for f in brightness_factors]
+        f_contrast_array = [self.make_f_contrast(factor=f) for f in contrast_factors]
+
+        # Compose all combinations into the perturbation set
+        self.perturbation_set = self.make_composite_perturbations(f_brightness_array, f_contrast_array)
 
     def fill_tgt_pseudo(self, data_buffer: sourceTargetBalanceBuffer, visual_encoder: nn.Module, discriminator: nn.Module, debug = False):
         """Fill in the target_buffer if target buffer size is smaller than tgt_buffer_max_size"""
