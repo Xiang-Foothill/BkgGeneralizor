@@ -368,8 +368,52 @@ def visualize_data_size_experiment_with_variance(file_name):
     plt.tight_layout()
     plt.show()
 
+def visualize_data_size_experiment_shadow(file_name):
+    """
+    Load and plot the data from a .npz file containing:
+      - 'tgt_domain_sizes': a shared x-axis array
+      - 'max_traj_lens': a dictionary mapping labels to 2D arrays [n_sizes, n_seeds]
+    Plot the mean trajectory length with shaded variance region (mean ± std).
+    """
+    # Load file
+    save_dir = os.path.join("graphs", "raw_data")
+    save_path = os.path.join(save_dir, f"{file_name}.npz")
+    data = np.load(save_path, allow_pickle=True)
+    
+    tgt_domain_sizes = data['tgt_domain_sizes']
+    max_traj_lens = data['max_traj_lens'].item()  # dict of [n_sizes, n_seeds] arrays
+
+    # Plot
+    plt.figure(figsize=(8, 5))
+    for label, traj_lens_matrix in max_traj_lens.items():
+        traj_lens_matrix = np.array(traj_lens_matrix)
+        means = traj_lens_matrix.mean(axis=1)
+        stds = traj_lens_matrix.std(axis=1)
+
+        clean_label = label_simplifier(label)
+
+        # Decide line style by hardcoding
+        if IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ not in label:
+            line_style = ':'  # dotted
+        else:
+            line_style = '-'  # solid
+        
+        # Plot mean with 'x' marker and line
+        plt.plot(tgt_domain_sizes, means, label=clean_label, marker='o', linestyle=line_style, linewidth=2)
+
+        # Plot shaded region for standard deviation
+        plt.fill_between(tgt_domain_sizes, means - stds, means + stds, alpha=0.2)
+
+    plt.xlabel('Target Domain Buffer Size')
+    plt.ylabel('Maximum Trajectory Length')
+    plt.title('Data Size vs. Adaptation Performance')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
 if __name__ == '__main__':
     pretrain_model = PRETRAIN_BRIGHT3
     title = "datasize_exp_pseudo_res1"
-    data_size_experiment_with_variance(pretrain_model, title)
-    # visualize_data_size_experiment_with_variance(title)
+    # data_size_experiment_with_variance(pretrain_model, title)
+    visualize_data_size_experiment_shadow(title)
