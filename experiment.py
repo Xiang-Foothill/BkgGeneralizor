@@ -415,5 +415,5 @@ def visualize_data_size_experiment_shadow(file_name):
 if __name__ == '__main__':
     pretrain_model = PRETRAIN_BRIGHT3
     title = "data_size_pseudo_only_curvature_exp1"
-    data_size_experiment_with_variance(pretrain_model, title)
-    # visualize_data_size_experiment_shadow(title)
+    # data_size_experiment_with_variance(pretrain_model, title)
+    visualize_data_size_experiment_shadow(title)
