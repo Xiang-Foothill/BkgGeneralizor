@@ -285,24 +285,24 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
     )
 
     logger.info(f"Saved results (with dict) to {save_path}")
-    visualize_data_size_experiment_with_variance(title)
+    visualize_data_size_experiment_shadow(title)
 
 def label_simplifier(label):
         """hard code method that makes the label cleaner when demonstrating"""
         if IL_Trainer_CARLA_Perfect_Baseline.__name__ in label:
             return "Perfect Baseline"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition' in label and "naive_random" in label:
-            return "TCDT(naive random distribution)"
+            return "TCADT(naive random distribution)"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition' in label and "first_4m_random" in label:
-            return "TCDT(first-4m heavy distribution)"
+            return "TCADT(first-4m heavy distribution)"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition' in label and "middle_3m_random" in label:
-            return "TCDT(middle-3m heavy distribution)"
+            return "TCADT(middle-3m heavy distribution)"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition_reweight' in label and "naive_random" in label:
-            return "TCDTR(naive random distribution)"
+            return "TCADTR(naive random distribution)"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition_reweight' in label and "first_4m_random" in label:
-            return "TCDTR(first-4m heavy distribution)"
+            return "TCADTR(first-4m heavy distribution)"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition_reweight' in label and "middle_3m_random" in label:
-            return "TCDTR(middle-3m heavy distribution)"
+            return "TCADTR(middle-3m heavy distribution)"
         else:
             return label
         
@@ -414,6 +414,6 @@ def visualize_data_size_experiment_shadow(file_name):
 
 if __name__ == '__main__':
     pretrain_model = PRETRAIN_BRIGHT3
-    title = "datasize_exp_pseudo_res1"
-    # data_size_experiment_with_variance(pretrain_model, title)
-    visualize_data_size_experiment_shadow(title)
+    title = "data_size_pseudo_only_curvature_exp1"
+    data_size_experiment_with_variance(pretrain_model, title)
+    # visualize_data_size_experiment_shadow(title)

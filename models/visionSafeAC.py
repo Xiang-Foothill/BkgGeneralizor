@@ -1098,12 +1098,24 @@ class Discriminator(BaseModel):
     feature_fields = ['camera']
     label_fields = ['domain_indicator']
 
-    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_dim, null_init = False):
+    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_mode = "None", null_init = False):
         super().__init__()
 
         if null_init:
             return
         
+        #define dis_info_dim based on the dis_info_mode
+        if dis_info_mode == "only_curvature":
+            dis_info_dim = 3
+        elif dis_info_mode == "state_curvature":
+            dis_info_dim = 5
+        elif dis_info_mode == "None":
+            dis_info_dim = 0
+        else:
+            raise ValueError("The input dis_info_mode is invalid")
+        self.dis_info_mode = dis_info_mode
+        logger.info(f"The current applied discriminative information is {self.dis_info_mode}")
+
         self.D = nn.Sequential( # try deeper architecture for the discriminator
         nn.Linear(encoder_output_dim + dis_info_dim, 256),
         nn.ReLU(),
@@ -1231,7 +1243,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         self.discriminator = Discriminator(lr = ad_agent_params['lr_discriminator'], 
                                            weight_decay = ad_agent_params['weight_decay'],
                                            encoder_output_dim = ad_agent_params["encoder_output_dim"],
-                                           dis_info_dim = ad_agent_params['dis_info_dim'])
+                                           dis_info_mode = ad_agent_params['dis_info_mode'])
         
         self.actor.set_discriminator(self.discriminator)
 
@@ -1287,7 +1299,7 @@ class VisionConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
         self.discriminator = CatDiscriminator(lr = ad_agent_params['lr_discriminator'], 
                                            weight_decay = ad_agent_params['weight_decay'],
                                            encoder_output_dim = ad_agent_params["encoder_output_dim"],
-                                           dis_info_dim = ad_agent_params['dis_info_dim'])
+                                           dis_info_mode = ad_agent_params['dis_info_mode'])
         
         self.actor.set_discriminator(self.discriminator)
 
@@ -1324,6 +1336,17 @@ class CatDiscriminator(Discriminator):
     feature_fields = ['camera', 'state', 'curvature']
     label_fields = ['domain_indicator']
 
+    def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_mode, null_init = False):
+        super().__init__(lr=lr, weight_decay=weight_decay, encoder_output_dim = encoder_output_dim,
+                         dis_info_mode= dis_info_mode, null_init = null_init)
+        
+        if self.dis_info_mode == "state_curvature":
+            self.discriminative_info = self.h_state_curvature
+        elif self.dis_info_mode == "only_curvature":
+            self.discriminative_info = self.h_only_curvature
+        else:
+            raise ValueError("The input dis_info_mode is invalid")
+
     def input_buffer(self, features, actor : VisionAdversarialActor ):
         """preprocess the features before passing them to the model.
         note that in the dataloader, there are only RGB images, there is no such a field called latent vector"""
@@ -1336,13 +1359,17 @@ class CatDiscriminator(Discriminator):
 
         return [latent_vectors, dis_info]
     
-    def discriminative_info(self, state, curvature):
+    def h_state_curvature(self, state, curvature):
         """extract task relevant information from the state variable and the curvature variable,
         which is discriminative in all the domains"""
         task_info_state = state[:, -2:]        # shape: [batch_size, 2]
         task_info_curvature = curvature        # shape: [batch_size, 3]
         return torch.cat([task_info_state, task_info_curvature], dim=1)  # shape: [batch_size, 5]
     
+    def h_only_curvature(self, state, curvature):
+        """simply return curvature"""
+        return curvature
+
     def forward(self, l, dis_info):
 
         """The conditioning policy is simply concatenate the latent vectors with the discriminative information"""
