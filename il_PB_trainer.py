@@ -36,6 +36,7 @@ from utils.logging.writer import MultiPurposeWriter
 from il_trainer import IL_Trainer_CARLA_VisionSafeAC
 import pickle
 from sklearn.decomposition import PCA
+from torch.utils.tensorboard import SummaryWriter
 
 from loguru import logger
 from labml import experiment

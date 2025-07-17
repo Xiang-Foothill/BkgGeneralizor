@@ -32,6 +32,7 @@ from utils.logging.writer import MultiPurposeWriter
 from il_trainer import IL_Trainer_CARLA_VisionSafeAC
 import pickle
 from sklearn.decomposition import PCA
+from torch.utils.tensorboard import SummaryWriter
 
 from loguru import logger
 from labml import experiment
@@ -205,19 +206,14 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
     
     n_epochs = 6
     seeds = [0, 20, 35, 40, 80]
+    # seeds = [0, 20]
 
+    writer = initialize_exp_writer(title=title)
     num_seeds = len(seeds)
 
     max_traj_lens = {}
     tgt_domain_sizes = [2048, 1024, 512, 256, 213, 170, 128]
     # tgt_domain_sizes = [512, 256, 128]
-    # tgt_domain_sizes = [1024]
-    # trainer_clses = [
-    #     (IL_Trainer_CARLA_Perfect_Baseline, None),
-    #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition', 'sample_distribution': 'naive_random'}),
-    #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition', 'sample_distribution': 'first_4m_random'}),
-    #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition', 'sample_distribution': 'middle_3m_random'})
-    # ]
 
     # trainer_clses = [
     #     (IL_Trainer_CARLA_VisionAdversarialAdaptationAC, {'discriminator_type': 'cat_condition_reweight', 'sample_distribution': 'naive_random'}),
@@ -235,13 +231,19 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
     common_params = make_common_params(pretrain_model)
 
     for trainer_cls, predefined_params in trainer_clses:
+        # Construct label
+        if predefined_params is None:
+            label = trainer_cls.__name__
+        else:
+            param_str = "_".join(str(v) for v in predefined_params.values())
+            label = f"{trainer_cls.__name__}_{param_str}"
+        
         # Initialize storage: list of lists -> [len(tgt_domain_sizes)][num_seeds]
-        results_matrix = []
+        results_matrix = np.zeros(shape = (len(tgt_domain_sizes), len(seeds)))
 
-        for tgt_domain_len in tgt_domain_sizes:
-            seed_results = []
+        for i, tgt_domain_len in enumerate(tgt_domain_sizes):
 
-            for seed in seeds:
+            for j, seed in enumerate(seeds):
                 current_params = common_params.copy()
                 current_params["target_domain_len"] = tgt_domain_len
 
@@ -259,19 +261,11 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
                 agent_params = config['model_hparams']
                 trainer = trainer_cls(**current_params, **agent_params)
                 max_traj_len = trainer.training_loop(n_epochs)
-                seed_results.append(max_traj_len)
-
-            results_matrix.append(seed_results)
-
-        # Construct label
-        if predefined_params is None:
-            label = trainer_cls.__name__
-        else:
-            param_str = "_".join(str(v) for v in predefined_params.values())
-            label = f"{trainer_cls.__name__}_{param_str}"
-
-        # Store as a (len(tgt_domain_sizes), num_seeds) array
-        max_traj_lens[label] = np.array(results_matrix)
+                results_matrix[i, j] = max_traj_len
+            
+            max_traj_lens[label] = results_matrix
+            max_traj_lens_plot = visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens)
+            writer.add_figure(tag = "data_size_experiment", figure = max_traj_lens_plot, global_step = 0)
 
     # Save data
     save_dir = os.path.join("graphs", "raw_data")
@@ -285,7 +279,11 @@ def data_size_experiment_with_variance(pretrain_model: str, title: str):
     )
 
     logger.info(f"Saved results (with dict) to {save_path}")
-    visualize_data_size_experiment_shadow(title)
+    visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens, display = True)
+
+def initialize_exp_writer(title):
+    writer = SummaryWriter(log_dir=f"logs/{title}")
+    return writer
 
 def label_simplifier(label):
         """hard code method that makes the label cleaner when demonstrating"""
@@ -368,13 +366,9 @@ def visualize_data_size_experiment_with_variance(file_name):
     plt.tight_layout()
     plt.show()
 
-def visualize_data_size_experiment_shadow(file_name):
-    """
-    Load and plot the data from a .npz file containing:
-      - 'tgt_domain_sizes': a shared x-axis array
-      - 'max_traj_lens': a dictionary mapping labels to 2D arrays [n_sizes, n_seeds]
-    Plot the mean trajectory length with shaded variance region (mean ± std).
-    """
+def extract_data(file_name):
+    """return the tgt_domain_sizes and max_traj_lens array stored in the file path"""
+
     # Load file
     save_dir = os.path.join("graphs", "raw_data")
     save_path = os.path.join(save_dir, f"{file_name}.npz")
@@ -383,8 +377,19 @@ def visualize_data_size_experiment_shadow(file_name):
     tgt_domain_sizes = data['tgt_domain_sizes']
     max_traj_lens = data['max_traj_lens'].item()  # dict of [n_sizes, n_seeds] arrays
 
-    # Plot
-    plt.figure(figsize=(8, 5))
+    return tgt_domain_sizes, max_traj_lens
+
+import matplotlib.pyplot as plt
+
+def visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens, display=False):
+    """
+    Plot mean trajectory length with shaded variance region (mean ± std).
+    Returns a Matplotlib Figure object for logging to TensorBoard.
+    """
+
+    # Create a figure and axes object
+    fig, ax = plt.subplots(figsize=(8, 5))
+
     for label, traj_lens_matrix in max_traj_lens.items():
         traj_lens_matrix = np.array(traj_lens_matrix)
         means = traj_lens_matrix.mean(axis=1)
@@ -392,28 +397,32 @@ def visualize_data_size_experiment_shadow(file_name):
 
         clean_label = label_simplifier(label)
 
-        # Decide line style by hardcoding
         if IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ not in label:
             line_style = ':'  # dotted
         else:
             line_style = '-'  # solid
-        
-        # Plot mean with 'x' marker and line
-        plt.plot(tgt_domain_sizes, means, label=clean_label, marker='o', linestyle=line_style, linewidth=2)
 
-        # Plot shaded region for standard deviation
-        plt.fill_between(tgt_domain_sizes, means - stds, means + stds, alpha=0.2)
+        ax.plot(tgt_domain_sizes, means, label=clean_label, marker='o', linestyle=line_style, linewidth=2)
+        ax.fill_between(tgt_domain_sizes, means - stds, means + stds, alpha=0.2)
 
-    plt.xlabel('Target Domain Buffer Size')
-    plt.ylabel('Maximum Trajectory Length')
-    plt.title('Data Size vs. Adaptation Performance')
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
+    ax.set_xlabel('Target Domain Buffer Size')
+    ax.set_ylabel('Maximum Trajectory Length')
+    ax.set_title('Data Size vs. Adaptation Performance')
+    ax.legend()
+    ax.grid(True)
+
+    fig.tight_layout()
+    
+    if display:
+        plt.show()
+
+    return fig
 
 if __name__ == '__main__':
+
     pretrain_model = PRETRAIN_BRIGHT3
-    title = "data_size_pseudo_only_state_exp1"
-    # data_size_experiment_with_variance(pretrain_model, title)
-    visualize_data_size_experiment_shadow(title)
+    title = "data_size_only_x_tran_exp1"
+    data_size_experiment_with_variance(pretrain_model, title)
+
+    # tgt_domain_sizes, max_traj_lens = extract_data(title)
+    #visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens)

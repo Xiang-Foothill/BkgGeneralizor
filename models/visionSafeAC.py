@@ -1111,6 +1111,8 @@ class Discriminator(BaseModel):
             dis_info_dim = 5
         elif dis_info_mode == "only_state":
             dis_info_dim = 2
+        elif dis_info_mode == "only_x_tran":
+            dis_info_dim = 1
         elif dis_info_mode == "None":
             dis_info_dim = 0
         else:
@@ -1348,6 +1350,8 @@ class CatDiscriminator(Discriminator):
             self.discriminative_info = self.h_only_curvature
         elif self.dis_info_mode == "only_state":
             self.discriminative_info = self.h_only_state
+        elif self.dis_info_mode == "only_x_tran":
+            self.discriminative_info = self.h_only_x_tran
         else:
             raise ValueError("The input dis_info_mode is invalid")
 
@@ -1377,6 +1381,10 @@ class CatDiscriminator(Discriminator):
     def h_only_state(self, state, curvature):
         """only return e_psi and lateral deviation from the center line"""
         return state[:, -2:]
+    
+    def h_only_x_tran(self, state, curvature):
+        """only return x_tran, the lateral deviation as the discriminatie information"""
+        return state[:, -2 : -1]
 
     def forward(self, l, dis_info):
 
