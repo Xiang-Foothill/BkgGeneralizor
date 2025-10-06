@@ -991,7 +991,7 @@ class VisionAdversarialActor(BaseModel):
         # Adversarial loss: encourage encoder to fool discriminator
         # Flip domain labels: try to make domain_ind_pred look like the opposite (e.g., 0.5 or source)
         # target_labels = 1. - domain_ind.float()  # invert labels
-        target_labels = torch.ones_like(domain_ind, dtype=torch.float32) * 0.9  # new uniform label: 0.9 for all
+        target_labels = torch.ones_like(domain_ind, dtype=torch.float32) * 0.5  # new uniform label: 0.9 for all, which is the best label for PRETRAIN_BRIGHT3
 
         adv_loss_fn = nn.BCEWithLogitsLoss()
         adv_loss = adv_loss_fn(domain_logits, target_labels)
@@ -1130,7 +1130,7 @@ class Discriminator(BaseModel):
 
         self.optimizer = Adam(self.D.parameters(), lr=lr,
                               weight_decay=weight_decay)
-        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=1)
+        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=0.85)
     
     def freeze(self):
         logger.info(f"freeze the {self.model_name}")
@@ -1258,7 +1258,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         info = defaultdict(lambda: {})
         # first train the discriminator
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
-        discriminator_info = self.discriminator.fit(n_epochs = n_epochs * 3, train_dataset = train_dataset, actor = self.actor)
+        discriminator_info = self.discriminator.fit(n_epochs = n_epochs, train_dataset = train_dataset, actor = self.actor)
 
         #train the actor
         logger.info(f"///// Training the actor ///// [{self.actor.model_name}]")

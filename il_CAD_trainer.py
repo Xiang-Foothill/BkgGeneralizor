@@ -32,6 +32,7 @@ from utils import data_util
 from torch.utils.data import DataLoader
 import utils.pytorch_util as ptu
 from utils.logging.writer import MultiPurposeWriter
+import utils.plot_util as ptl
 from il_trainer import IL_Trainer_CARLA_VisionSafeAC
 import pickle
 from sklearn.decomposition import PCA
@@ -69,6 +70,9 @@ PRETRAIN_BRIGHT1 = 'L_track_barc_pretrain_bright1' # domain list: DOMAIN7, DOMAI
 PRETRAIN_BRIGHT2 = 'L_track_barc_pretrain_bright2' #domain list: DOMAIN7, DOMAIN6, DOMAIN4; visual encoder output size: 512; Trained for 17 epochs
 PRETRAIN_BRIGHT3 = 'L_track_barc_pretrain_bright3' #domain list: DOMAIN7, DOMAIN6, DOMAIN4; visual encoder output size: 512; Trained for 16 epochs
 
+PRETRAIN_SPEED0 = 'L_track_barc_speed_transfer0' # the expert is mpcc-conv, domain_list: domain4
+PRETRAIN_SPEED1 = 'L_track_barc_speed_transfer1' # the expert is mpcc-conv, domain list: DOMAIN4, DOMAIN5
+
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
@@ -97,13 +101,13 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                        pretrain_critic=False,
                        beta_decay_freq=5,
                        save_profile = False,
-                       save_model = False,
+                       save_model = True,
                        to_reload = False,
                        target_domain_len = 5000,
                        discriminator_type = 'no_condition',
                        source_buffer = None,
                        env = None,
-                       visualize = False,
+                       visualize = True,
                        sample_distribution = 'naive_random',
                        **agent_params):
         """
@@ -124,9 +128,11 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         @param n_initial_training_epochs:
         @param agent_params:
         """
-        self.pretrain_encoder_path = PRETRAIN_BRIGHT3
+        self.carla_params = carla_params
+        
+        self.pretrain_encoder_path = PRETRAIN_SPEED1
         self.target_domain_len = target_domain_len
-        self.target_domains = [DOMAIN12]
+        self.target_domains = [DOMAIN11]
         self.save_model = save_model
         self.visualize = visualize
         self.discriminator_type = discriminator_type
@@ -362,6 +368,67 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
 
         return traj_len
     
+    def sample_pid_trajectory(self, domain, pbar: Optional['tqdm'] = None,
+                          max_traj_len=np.inf,
+                          PATIENCE=2, TRUNCATE=np.inf, buffer: data_util.EfficientReplayBuffer = None):
+        """
+
+        @param beta:
+        @param pbar:
+        @param max_traj_len:
+        @param PATIENCE: Maximum allowed consecutive expert fails before truncating the trajectory.
+        @param TRUNCATE: Number of examples to remove from the replay buffer if the trajectory is truncated.
+        @return:
+        """
+        cur_map = domain["map_name"]
+        weatherID = domain["weatherID"]
+        pid_expert = PIDWrapper(dt=self.carla_params['dt'], t0=self.carla_params['t0'], track_obj=self.env.get_track())
+        ob, info = self.env.reset(options={'controller': pid_expert}, map_name = cur_map, weatherID = weatherID)
+        pid_expert.reset(options=info)
+
+        terminated, truncated = False, False
+        traj_len = 0
+        fail_counter = 0
+
+        while traj_len < max_traj_len:
+
+            self.label_domain(ob, domain) # label the carla observation the domain probability vector
+            expert_ac, expert_info = pid_expert.step(**ob, **info)
+            expert_ac = np.clip(expert_ac, self.env.action_space.low, self.env.action_space.high)
+
+            # try:
+            if expert_info['success']:
+                next_ob, rew, terminated, truncated, info = self.env.step(expert_ac)
+                buffer.add_frame(ob, rew, terminated, truncated, info,
+                                             action=expert_ac.astype(np.float32),
+                                             closed_loop_action=expert_ac.astype(np.float32),
+                                             next_state=next_ob['state'])
+                fail_counter = 0
+
+            else:
+                logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
+                next_ob, rew, terminated, truncated, info = self.env.step(expert_ac)
+                fail_counter += 1
+                buffer.add_frame(ob, rew, terminated, truncated, info,
+                                                   action=expert_ac.astype(np.float32),
+                                                   closed_loop_action=expert_ac.astype(np.float32),
+                                                   next_state=next_ob['state'])
+                if fail_counter >= PATIENCE:
+                    truncated = True
+
+            traj_len += 1
+            ob = next_ob
+
+            if pbar is not None:
+                pbar.update(1)
+            
+            if truncated: # reset the environment if the vehicle is truncated
+                ob, info = self.env.reset(options={'controller': pid_expert})
+                pid_expert.reset(options=info)
+                terminated, truncated = False, False
+
+        return traj_len
+
     def random_sample(self, domain,  pbar: Optional['tqdm'] = None, max_traj_len = np.inf, buffer: data_util.EfficientReplayBuffer = None):
         cur_map = domain["map_name"]
         weatherID = domain["weatherID"]
@@ -529,7 +596,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             return False, f_stop_flag
             
         stop_flag, f_stop_flag = make_stop_flag()
-        visualization_list = [self.domain_list[0], self.domain_list[1], self.target_domains[0]]
+        visualization_list = [self.domain_list[0], self.target_domains[0]]
         
         # before starting tuning the model for domain adpatation, do the evaluation for different domains
         logger.info("Pretraining Evaluation .......")
@@ -548,9 +615,10 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             try:
                 cur_beta = 0.2
                 logger.info(f"the compensated beta value for the spawning this time is {cur_beta}")
-                self.sample_trajectories(beta = cur_beta, domain_list = self.target_domains,
+                self.target_sample(beta = cur_beta, domain_list = self.target_domains,
                         total_length=self.target_domain_len, buffer = self.replay_buffer.target_buffer,
-                        global_step=0)
+                        global_step=0, sample_policy=self.sample_pid_trajectory)
+                
             finally:
                 logger.info("------- data collecting from the target domain ends ---------")
             
@@ -562,6 +630,14 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             
             self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
             self.train_module(self.agent, global_step)
+
+            cur_beta = self.init_beta * (self.beta ** (global_step - self.starting_step))
+            logger.info(f"the current beta is {cur_beta}")
+            self.sample_trajectories(beta=cur_beta,
+                                     domain_list = self.domain_list,
+                                         total_length=self.eps_len,
+                                         buffer = self.replay_buffer.source_buffer,
+                                         global_step=global_step)
 
             if global_step % self.visualize_freq == 0 and self.visualize:
                 self.PCA_visualization(visualization_list, display_full_name=False)
@@ -582,15 +658,13 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                         if benchmark not in self.evaluation_list[domain_name]:
                             self.evaluation_list[domain_name][benchmark] = []
                         self.evaluation_list[domain_name][benchmark].append(evaluate_res[domain_name][benchmark])
+
                 if stop_flag:
                     logger.info("Final visualization for the successfull convergence ...")
                     if self.visualize:
                         self.PCA_visualization(visualization_list)
                     logger.info("//////////////////////// convergence to successful behavior  ////////////////////// early stop triggered !!!!")
                     break
-
-            if self.save_model:
-                self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
 
             self.cur_epoch = global_step
 
@@ -606,9 +680,15 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                     pickle.dump(profile_data, f)
                 logger.info(f"Training profile saved to {profile_path}")
 
+        target_domain_res = self.evaluation_list[self.target_domains[0]['name']]['traj_len']
+        ptl.plot_scatter_line(target_domain_res, "fine tune step", "trajectory length")
+
+        if self.save_model:
+            self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
+
         logger.info(f"the maximum achived trajectory length in the target domain system = {max_traj_len}")
         return max_traj_len
-    
+
     def PCA_visualization(self, collect_domains, display_full_name=True):
         """Using the PCA technique to visualize the high-dimensional latent vector space"""
         """Use PCA to project and visualize latent vectors from all domains in 2D."""
@@ -700,7 +780,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         
         return result
 
-    def sample_trajectories(self, domain_list, beta: float, total_length=None, global_step=None, buffer: data_util.EfficientReplayBuffer = None):
+    def target_sample(self, domain_list, beta: float, total_length=None, global_step=None, buffer: data_util.EfficientReplayBuffer = None, sample_policy = None):
         logger.info('Sampling trajectories for training...')
         total_length = total_length or self.eps_len
         batch_traj_len = 0
@@ -713,10 +793,30 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                 domain = np.random.choice(domain_list)
 
                 #traj_len = self.sample_trajectory(domain = domain, beta = rand_beta, pbar=pbar, max_traj_len=max_traj_len, buffer = buffer)
-                traj_len = self.random_sample(domain = domain, pbar = pbar, max_traj_len=max_traj_len, buffer = buffer)
+                traj_len = sample_policy(domain = domain, pbar = pbar, max_traj_len=max_traj_len, buffer = buffer)
 
                 batch_traj_len += traj_len
                 n_resets += 1
+
+        self.writer.do_logging({f'failure_rate': (n_resets - 1) / total_length}, global_step=global_step, mode='train')
+        return batch_traj_len
+    
+    def sample_trajectories(self, domain_list, beta: float, total_length=None, global_step=None, buffer: data_util.EfficientReplayBuffer = None):
+        logger.info('Sampling trajectories for training...')
+        total_length = total_length or self.eps_len
+        batch_traj_len = 0
+        n_resets = 0
+        with tqdm(total=total_length, desc='Sampling', unit='steps') as pbar:
+            while batch_traj_len < total_length:
+
+                max_traj_len = min(1024, total_length - batch_traj_len)
+                domain = np.random.choice(domain_list)
+
+                traj_len = self.sample_trajectory(domain = domain, beta = beta, pbar=pbar, max_traj_len=max_traj_len, buffer = buffer)
+                
+                batch_traj_len += traj_len
+                n_resets += 1
+                
         self.writer.do_logging({f'failure_rate': (n_resets - 1) / total_length}, global_step=global_step, mode='train')
         return batch_traj_len
 
@@ -763,7 +863,121 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         
         return result
 
-    
+
+    def traj_collect(self, eval_domain, actor):
+
+        cur_map = eval_domain["map_name"]
+        weatherID = eval_domain["weatherID"]
+
+        ob, info = self.env.reset(options={'controller': self.expert, 'spawning': 'fixed'}, map_name =cur_map, weatherID = weatherID)
+
+        if actor is self.agent:
+            actor.reset()
+            actor.eval()
+        else:
+            actor.reset(options = info)
+
+        truncated, terminated = False, False
+        rews = 0.
+        traj_len = 0
+        completed_laps = 0
+
+        traj = []
+
+        while not truncated and completed_laps <= 1:
+
+            self.label_domain(ob, eval_domain)
+            if actor is self.agent:
+                ac, domain_probs_pred = actor.get_action(*self.agent.parse_carla_obs(ob, info))
+            else:
+                ac, actor_info = actor.step(**ob, **info)
+
+            ob, rew, terminated, truncated, info = self.env.step(ac)
+            rews += rew
+            traj_len += 1
+            completed_laps = info['lap_no']
+
+            traj.append(np.concatenate([ob['gps'][ : 2], ob['velocity'][ : 2]]))
+        return traj
+
+    def speed_regime_plot(self):
+        from matplotlib.colors import Normalize
+        from matplotlib.cm import ScalarMappable, get_cmap
+
+        # collect the trajectories
+
+        eval_domain = DOMAIN11
+        traj_agent_no_trans = self.traj_collect(eval_domain = eval_domain, actor = self.agent) # the agent trajectory before domain transfer
+
+        self.agent.load(path=Path(__file__).resolve().parent / 'model_data',
+                           name=comment)
+        
+        traj_agent_after_trans = self.traj_collect(eval_domain = eval_domain, actor = self.agent) # the agent trajectory after domain transfer
+        traj_collector = self.traj_collect(eval_domain = eval_domain, actor = PIDWrapper(dt=self.carla_params['dt'], t0=self.carla_params['t0'], track_obj=self.env.get_track())) # the data collector's trajectory
+        traj_expert = self.traj_collect(eval_domain = eval_domain, actor = self.expert) # the expert trajectory
+
+        trajs = [
+        ("Agent (before transfer)", traj_agent_no_trans),
+        ("Agent (after transfer)",  traj_agent_after_trans),
+        ("Safe Collector (PID)",    traj_collector),
+        ("Expert",                  traj_expert),
+    ]
+        # ------------------------------
+        # 2. Compute global speed range
+        # ------------------------------
+        all_speeds = []
+        for _, arr in trajs:
+            arr = np.asarray(arr, dtype=object)
+            for A in arr:
+                A = np.asarray(A)
+                if A.ndim > 1 and A.shape[1] >= 4:
+                    v = np.linalg.norm(A[:, 2:4], axis=1)
+                    all_speeds.append(v)
+                elif A.ndim == 1 and A.size >= 4:
+                    v = np.linalg.norm(A[2:4])
+                    all_speeds.append([v])
+
+        all_speeds = np.concatenate(all_speeds)
+        vmin, vmax = np.nanmin(all_speeds), np.nanmax(all_speeds)
+        norm = Normalize(vmin=vmin, vmax=vmax)
+        cmap = get_cmap('plasma')
+
+        # ------------------------------
+        # 3. Plot trajectories
+        # ------------------------------
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12), constrained_layout=True)
+        axes = axes.ravel()
+
+        # robust access to track object
+        get_trak = getattr(self.env, "get_trak", None)
+        track_obj = get_trak() if callable(get_trak) else self.env.get_track()
+
+        for ax, (title, traj) in zip(axes, trajs):
+            track_obj.plot_map(ax)
+            ax.set_aspect('equal')
+            ax.set_title(title)
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            ax.grid(True, linestyle=':', linewidth=0.5, alpha=0.5)
+
+            # draw with your helper
+            sc = ptl.plot_speed_scatter(ax, traj, cmap=cmap, add_colorbar=False)
+
+            # 🔧 ensure consistent mapping across ALL subplots
+            sc.set_norm(norm)
+            sc.set_cmap(cmap)
+
+        # ------------------------------
+        # 4. Shared colorbar
+        # ------------------------------
+        sm = ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=axes, fraction=0.035, pad=0.02)
+        cbar.set_label("Speed magnitude [m/s]")
+
+        plt.show()
+        return fig, axes
+
     def main(self, n_epochs: int):
         self.training_loop(n_epochs=n_epochs)
 
@@ -811,6 +1025,9 @@ if __name__ == '__main__':
     parser.add_argument("--target_domain_len", '-t', type = int, default = 2048) # the length of total trajectory sampled from the target domain
     parser.add_argument("--discriminator", '-d', type = str, default = 'no_condition', choices = ('no_condition', 'cat_condition', 'proj_condition','null', 'cat_condition_reweight', 'cat_condition_pseudo'))
     parser.add_argument("--sample_distribution", '-s', type = str, default = 'naive_random', choices = ('naive_random', 'first_4m_random', 'middle_3m_random'))
+
+    parser.add_argument("--speed_plot", action = 'store_true', default = False)
+
     params = vars(parser.parse_args())
 
     if params['experimental']:
@@ -888,6 +1105,9 @@ if __name__ == '__main__':
         trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
                            name=comment)
         trainer.gnz_evaluation()
+    
+    elif params["speed_plot"]:
+        trainer.speed_regime_plot()
     
     elif params["data_collect"]:
         trainer.data_collect()

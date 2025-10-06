@@ -188,7 +188,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         if pretrain_critic:
             self.pretrain_critic()
         
-        self.domain_list = [DOMAIN7, DOMAIN6, DOMAIN4] # the training-time available domains
+        self.domain_list = [DOMAIN4, DOMAIN5] # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
 
         # the list used to store evaluation result
@@ -777,7 +777,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
             weatherID = domain["weatherID"]
 
             ob, info = self.env.reset(options={'controller': self.expert, 'spawning': 'fixed'}, map_name =cur_map, weatherID = weatherID)
-            self.expert.reset(options=info, track_obj = self.env.get_track())
+            self.expert.reset(options=info)
 
             truncated, terminated = False, False
             lap_times = []

@@ -50,7 +50,7 @@ class BarcEnv(gym.Env):
         self.track_name = None
         self.update_track(map_name, with_dynamics = False)
         # self.track_obj.slack = 1
-        self.t0 = t0  # Constant
+        self.t0 = t0  # Constant, the start time step
         self.dt = dt
         self.dt_sim = dt_sim
         self.max_n_laps = max_n_laps
@@ -67,7 +67,7 @@ class BarcEnv(gym.Env):
         VL = 0.37
         VW = 0.195
         self.sim_dynamics_config = DynamicBicycleConfig(dt=dt_sim,
-                                                   model_name='dynamic_bicycle',
+                                                   model_name='dynamic_bicycle', # change this to 'kinematic_bicycle' for better simulation with time-delay
                                                    noise=False,
                                                    discretization_method='rk4',
                                                    simple_slip=False,
