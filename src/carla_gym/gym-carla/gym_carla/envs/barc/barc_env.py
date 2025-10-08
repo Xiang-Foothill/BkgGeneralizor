@@ -82,15 +82,16 @@ class BarcEnv(gym.Env):
                                                    # bump_dist_front=0.15,
                                                    # bump_dist_rear=0.15,
                                                    # bump_dist_center=0.1,
-                                                   mass=2.2187,
-                                                   yaw_inertia=0.02723,
+                                                   mass=2.92,
+                                                   yaw_inertia=0.03323,
                                                    wheel_friction=0.9,
                                                    pacejka_b_front=5.0,
                                                    pacejka_b_rear=5.0,
                                                    pacejka_c_front=2.28,
                                                    pacejka_c_rear=2.28)
         # dynamics_simulator = DynamicsSimulator(t, sim_dynamics_config, delay=[0.1, 0.1], track=track_obj)
-        self.dynamics_simulator = DynamicsSimulator(t0, self.sim_dynamics_config, delay=None, track=self.track_obj)
+        self.dynamics_simulator = DynamicsSimulator(t0, self.sim_dynamics_config, delay=[0.2, 0.2], track=self.track_obj) # add the delay to match the hardware spec
+
         if enable_camera:
             from gym_carla.envs.barc.cameras.carla_bridge import CarlaConnector
             from gym_carla.envs.barc.cameras.pixmix_camera import mixCamera
@@ -446,6 +447,7 @@ class BarcEnv(gym.Env):
 
         if self.enable_camera:
             camera, semantics = self.camera_bridge.query_rgb(self.sim_state)
+
             ob.update({
                 'camera': camera,
             })

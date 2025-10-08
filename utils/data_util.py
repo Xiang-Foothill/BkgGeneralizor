@@ -20,6 +20,7 @@ from loguru import logger
 import matplotlib.pyplot as plt
 import time
 import torch
+import cv2
 
 class StackedLoader:
     """For the balanced training for data from the target domain and the source domain"""
@@ -277,12 +278,15 @@ class EfficientReplayBuffer(Dataset, ABC):
 
         data = np.load(path / f"{name}.npz", mmap_mode='r')
         data = {k: v.copy() for k, v in data.items()}
+        data.pop('size') # remove the trivial size field from the data
 
         self.size = self.left = self.right = 0
         # self.size = self.right = data['size']
         # self.left = 0
 
         self.initialize(batched=True, **data)
+
+        data = {k: v[ : self.maxsize - 1] for k, v in data.items()} # avoid the overflow bug during initialization
         self.append(batched=True, **data)
         logger.debug(f"The replay buffer is successfully loaded. Current size = {self.__len__()}")
 
@@ -361,6 +365,71 @@ class EfficientReplayBuffer(Dataset, ABC):
             is_inside = np.all(vals <= 1e-8)
             ret.append(is_inside)
         return np.asarray(ret)
+
+    # The functions below are designed for barc hardware loading
+    
+    def load_barc_data(self, data_path: str, data_name: str):
+        """
+        load barc hardware data from the specific path to this data loader.
+        The barc hardware data is stroed in a folder named "data". 
+        The data folder will contain a number [file_name.npz] files, each of which are a dictionary with the following keys:
+        ['images', 'sensors', 'states', 'actions', 'rews', 'dones', 'agent_actions', 'collection_actions'].
+        For each field of the data, data_file['[field]'] will share the same batch_dimension, i.e. data_file["images"][i] will be an image
+        collected at time step i, and data_file["states"][i] is the state vector collected at time step i.
+
+        data_path: the absolute path to the data folder
+        file_name: This argument specify which file to load
+        unpack_func: Dict -> Dict. A function that defines how to unpack data.
+        """
+        def unpack_func(barc_data : Dict):
+            T = barc_data["images"].shape[0] # the batch dimension
+
+            camera = np.transpose(barc_data["images"], (0, 2, 3, 1))
+
+            camera = np.stack([
+            cv2.resize(img, (224, 224), interpolation=cv2.INTER_LINEAR)
+            for img in camera
+        ])
+
+            #NOTE: the x, y global coordinates are stored in data["states"][:, 3: 5]
+            gps = np.zeros(shape = [T, 3], dtype = np.float32)
+            gps[:, : 2] = barc_data['states'][:, 3 : 5]
+
+            packed_data = {
+            'gps': gps,
+            'velocity': np.zeros(shape = [T, 3], dtype = np.float32),
+            'state': np.zeros(shape = [T, 6], dtype = np.float32),
+            'curvature': np.zeros(shape = [T, 3], dtype = np.float32),
+            'camera': camera
+        }
+            return packed_data
+
+            # Expand ~ and normalize inputs
+        data_dir = Path(data_path).expanduser()
+        data_stem = Path(data_name).stem  # handles "foo" or "foo.npz"
+
+        # If user accidentally passed a full file path in data_path, handle that too
+        if data_dir.is_file() and data_dir.suffix == ".npz":
+            file_path = data_dir
+        else:
+            file_path = (data_dir / f"{data_stem}.npz")
+            
+        if not file_path.exists():
+            raise FileNotFoundError(f"Could not find npz at {file_path}")
+        else:
+            logger.info(f"Found barc_data in {file_path}")
+
+        # Load lazily to avoid copying large arrays into RAM twice
+        # (we’ll copy only what we need below).
+        npz = np.load(file_path, mmap_mode="r", allow_pickle=False)
+
+        data = {field: npz[field]
+            for field in npz.files
+        }
+
+        data = unpack_func(data)
+
+        self.append(batched=True, **data)
 
     # def __is_in_knn_convex_hull(self, query, fields, k: int, threshold=1.):
     #     """
