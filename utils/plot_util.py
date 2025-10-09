@@ -1,6 +1,6 @@
 from matplotlib import pyplot as plt
 import numpy as np
-
+from matplotlib.colors import Normalize
 
 def plot_scatter_line(data, xlabel, ylabel):
         """
@@ -152,3 +152,81 @@ def plot_speed_scatter(ax, arr, *, use_mean=False, cmap='viridis', add_colorbar=
         cb.set_label('Speed magnitude')
 
     return sc
+
+def plot_action_diff_on_track(data_dict, ax, *, cmap='gray_r', s=14, alpha=0.95, add_colorbar=True, robust=False):
+    """
+    Plot GPS points on a given track axes, colored by the L2 difference between
+    agent and expert actions. Darker = larger difference.
+
+    Parameters
+    ----------
+    data_dict : dict
+        Must contain:
+          - 'gps' : np.ndarray of shape (N, 2)
+          - 'agent_action' : np.ndarray of shape (N, 2)
+          - 'expert_action' : np.ndarray of shape (N, 2)
+    ax : matplotlib.axes.Axes
+        The axes on which the track has already been plotted.
+    cmap : str
+        Colormap name. 'gray_r' makes darker points indicate larger difference.
+    s : float
+        Scatter point size.
+    alpha : float
+        Transparency of scatter points.
+    add_colorbar : bool
+        Whether to add a colorbar to the plot.
+    robust : bool
+        If True, trims color scale between 2nd–98th percentiles for robustness to outliers.
+
+    Returns
+    -------
+    scatter : matplotlib.collections.PathCollection
+        The scatter artist for the plotted points.
+    norm : matplotlib.colors.Normalize
+        The normalization object used for color scaling.
+    """
+    gps   = np.asarray(data_dict['gps'], dtype=float)
+    a_act = np.asarray(data_dict['agent_action'], dtype=float)
+    e_act = np.asarray(data_dict['expert_action'], dtype=float)
+
+    # --- basic validation
+    if gps.ndim != 2 or gps.shape[1] != 2:
+        raise ValueError(f"gps must have shape (N, 2), got {gps.shape}")
+    if a_act.shape != e_act.shape or a_act.shape[1] != 2 or a_act.shape[0] != gps.shape[0]:
+        raise ValueError("agent_action and expert_action must both have shape (N, 2) matching gps.")
+
+    # --- compute L2 differences
+    diff = np.linalg.norm(a_act - e_act, axis=1)
+
+    # --- filter out NaNs
+    mask = np.all(np.isfinite(gps), axis=1) & np.isfinite(diff)
+    gps, diff = gps[mask], diff[mask]
+    if gps.size == 0:
+        raise ValueError("No valid gps/action-diff data to plot.")
+
+    # --- color normalization
+    if robust:
+        lo, hi = np.percentile(diff, [2, 98])
+        if hi <= lo:
+            lo, hi = np.min(diff), np.max(diff)
+        norm = Normalize(vmin=lo, vmax=hi)
+    else:
+        norm = Normalize(vmin=np.min(diff), vmax=np.max(diff))
+
+    # --- scatter plot
+    sc = ax.scatter(
+        gps[:, 0], gps[:, 1],
+        c=diff, cmap=cmap, norm=norm,
+        s=s, alpha=alpha, edgecolors='none'
+    )
+
+    ax.set_aspect('equal')
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.set_title('Action Discrepancy (Agent vs Expert)')
+
+    if add_colorbar:
+        cb = plt.colorbar(sc, ax=ax, fraction=0.04, pad=0.02)
+        cb.set_label(r'$||a_{\mathrm{agent}} - a_{\mathrm{expert}}||_2$')
+
+    return sc, norm

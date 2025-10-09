@@ -72,7 +72,7 @@ PRETRAIN_BRIGHT3 = 'L_track_barc_pretrain_bright3' #domain list: DOMAIN7, DOMAIN
 
 PRETRAIN_SPEED0 = 'L_track_barc_speed_transfer0' # the expert is mpcc-conv, domain_list: domain4
 PRETRAIN_SPEED1 = 'L_track_barc_speed_transfer1' # the expert is mpcc-conv, domain list: DOMAIN4, DOMAIN5
-
+BARC0 = "L_track_barc_Hardware_params_model" # the expert is mpcc-conv, domain list: DOMAIN4. The expert and simulation environments are configured with time delay.
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
@@ -130,7 +130,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         """
         self.carla_params = carla_params
         
-        self.pretrain_encoder_path = PRETRAIN_SPEED1
+        self.pretrain_encoder_path = BARC0
         self.target_domain_len = target_domain_len
         self.target_domains = [DOMAIN11]
         self.save_model = save_model

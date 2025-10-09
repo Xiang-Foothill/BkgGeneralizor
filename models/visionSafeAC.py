@@ -909,7 +909,7 @@ class VisionAdversarialActor(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', "domain_indicator"]
 
-    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.1):
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.):
         """
         Model Input: states
         Model Output: actions
@@ -974,7 +974,10 @@ class VisionAdversarialActor(BaseModel):
         output = self.decision(combined)
         return (output, domain_logits)
 
-    def loss(self, pred, label):
+    def loss(self, pred, label, only_source_policy = True):
+        """only_source_policy: bool. If it is true, the MSE policy loss will only be calculated using source-domain examples. Otherwise
+        all examples will be used to calculate MSE loss."""
+
         u_pred, domain_logits = pred # the u_pred here has a shape of [64, 2], [batch_size, output_size]
         u, domain_ind = label
 
@@ -983,10 +986,13 @@ class VisionAdversarialActor(BaseModel):
         source_mask = domain_ind.bool().squeeze(1)  # shape: [batch_size]
 
         # === Policy loss: only for source samples ===
-        if source_mask.sum() > 0:
-            policy_loss = self.loss_func(u_pred[source_mask], u[source_mask])
+        if only_source_policy:
+            if source_mask.sum() > 0:
+                policy_loss = self.loss_func(u_pred[source_mask], u[source_mask])
+            else:
+                policy_loss = torch.tensor(0.0, device=u.device)
         else:
-            policy_loss = torch.tensor(0.0, device=u.device)
+            policy_loss = self.loss_func(u_pred, u)
 
         # Adversarial loss: encourage encoder to fool discriminator
         # Flip domain labels: try to make domain_ind_pred look like the opposite (e.g., 0.5 or source)
@@ -995,8 +1001,8 @@ class VisionAdversarialActor(BaseModel):
 
         adv_loss_fn = nn.BCEWithLogitsLoss()
         adv_loss = adv_loss_fn(domain_logits, target_labels)
-
         total_loss = policy_loss + self.adv_factor * adv_loss
+
         return total_loss, {
                 'policy_loss': policy_loss.item(),
                 'adversarial_loss': adv_loss.item(),
@@ -1007,7 +1013,7 @@ class VisionAdversarialActor(BaseModel):
         train_examples, train_loss = 0, 0.
         val_examples, val_loss = 0, 0.
 
-        train_loader = train_dataset.series_dataloader(batch_size=16, shuffle=True, num_workers=0,
+        train_loader = train_dataset.series_dataloader(batch_size=64, shuffle=True, num_workers=0,
                                                 manifest=[self.feature_fields, self.label_fields])
         val_loader = val_dataset.dataloader(batch_size=64, shuffle=False, num_workers=0,
                                             manifest=[self.feature_fields,
@@ -1021,7 +1027,7 @@ class VisionAdversarialActor(BaseModel):
             self.train()
             for features, labels in tqdm(train_loader, desc = f'[epoch {epoch}]'):
                 pred = self(*features)
-                loss, train_info = self.loss(pred, labels)
+                loss, train_info = self.loss(pred, labels, only_source_policy=True)
                 self.optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
@@ -1038,23 +1044,26 @@ class VisionAdversarialActor(BaseModel):
             with torch.no_grad():
                 for features, labels in val_loader:
                     pred = self(*features)
-                    loss, val_info = self.loss(pred, labels)
+                    loss, val_info = self.loss(pred, labels, only_source_policy=False)
                     val_loss += loss.item()
                     val_examples += 1
                     for k, v in val_info.items():
                         val_scores[k] += v
         self.scheduler.step()
         info = {
-            'train': {f'{self.model_name}_loss': train_loss / train_examples,
-                      **{f'{self.model_name}_{k}': v / train_examples for k, v in train_scores.items()}}
+            'train': {f'loss': train_loss / train_examples,
+                      **{f'{k}': v / train_examples for k, v in train_scores.items()}}
         }
 
         for k, v in train_scores.items():
-            logger.info(f"{k} = {v / train_examples}")
+            logger.info(f"train-time {k} = {v / train_examples}")
 
         if val_loader is not None:
-            info['val'] = {f'{self.model_name}_loss': val_loss / val_examples,
-                           **{f'{self.model_name}_{k}': v / val_examples for k, v in val_scores.items()}}
+            info['val'] = {f'loss': val_loss / val_examples,
+                           **{f'{k}': v / val_examples for k, v in val_scores.items()}}
+        if val_dataset is not None:
+            for k, v in val_scores.items():
+                logger.info(f"eval-time real-domain {k} = {v / val_examples}")
         
         self.discriminator.unfreeze()
 
@@ -1103,13 +1112,13 @@ class Discriminator(BaseModel):
 
         if null_init:
             return
-        
+
         #define dis_info_dim based on the dis_info_mode
         if dis_info_mode == "only_curvature":
             dis_info_dim = 3
         elif dis_info_mode == "state_curvature":
             dis_info_dim = 5
-        elif dis_info_mode == "only_state":
+        elif dis_info_mode == "only_state" or dis_info_mode == "gps":
             dis_info_dim = 2
         elif dis_info_mode == "only_x_tran":
             dis_info_dim = 1
@@ -1120,11 +1129,15 @@ class Discriminator(BaseModel):
         self.dis_info_mode = dis_info_mode
         logger.info(f"The current applied discriminative information is {self.dis_info_mode}")
 
-        self.D = nn.Sequential( # try deeper architecture for the discriminator
-        nn.Linear(encoder_output_dim + dis_info_dim, 256),
-        nn.ReLU(),
-        nn.Linear(256, 1)
-        ) # such a discriminator by default set the input size to be 512
+        self.D = nn.Sequential(
+            nn.utils.spectral_norm(nn.Linear(encoder_output_dim + dis_info_dim, 256)),
+            nn.LayerNorm(256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(p=0.1),
+
+            nn.utils.spectral_norm(nn.Linear(256, 1))
+        )
+        # such a discriminator by default set the input size to be 512
 
         # self.D = nn.Linear(encoder_output_dim + dis_info_dim, 1) # the simplest version of discrminator network
 
@@ -1153,7 +1166,7 @@ class Discriminator(BaseModel):
         train_examples, train_loss = 0, 0.
         val_examples, val_loss = 0, 0.
 
-        train_loader = train_dataset.balanced_dataloader(batch_size=16, shuffle=True, num_workers=0,
+        train_loader = train_dataset.balanced_dataloader(batch_size=64, shuffle=True, num_workers=0,
                                                 manifest=[self.feature_fields, self.label_fields])
         val_loader = val_dataset.dataloader(batch_size=64, shuffle=False, num_workers=0,
                                             manifest=[self.feature_fields,
@@ -1193,16 +1206,16 @@ class Discriminator(BaseModel):
                         val_scores[k] += v
         self.scheduler.step()
         info = {
-            'train': {f'{self.model_name}_loss': train_loss / train_examples,
-                      **{f'{self.model_name}_{k}': v / train_examples for k, v in train_scores.items()}}
+            'train': {f'loss': train_loss / train_examples,
+                      **{f'{k}': v / train_examples for k, v in train_scores.items()}}
         }
 
         for k, v in train_scores.items():
             logger.info(f"{k} = {v / train_examples}")
 
         if val_loader is not None:
-            info['val'] = {f'{self.model_name}_loss': val_loss / val_examples,
-                           **{f'{self.model_name}_{k}': v / val_examples for k, v in val_scores.items()}}
+            info['val'] = {f'loss': val_loss / val_examples,
+                           **{f'{k}': v / val_examples for k, v in val_scores.items()}}
         
         actor.unfreeze()
 
@@ -1258,16 +1271,14 @@ class VisionAdversarialAdaptAC(BaseModel):
         info = defaultdict(lambda: {})
         # first train the discriminator
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
-        discriminator_info = self.discriminator.fit(n_epochs = n_epochs, train_dataset = train_dataset, actor = self.actor)
+        dis_epochs = n_epochs * 3 if not global_step else n_epochs 
+        discriminator_info = self.discriminator.fit(n_epochs = dis_epochs, train_dataset = train_dataset, actor = self.actor)
 
         #train the actor
         logger.info(f"///// Training the actor ///// [{self.actor.model_name}]")
-        actor_info = self.actor.fit(train_dataset=train_dataset, n_epochs = n_epochs)
+        actor_info = self.actor.fit(train_dataset=train_dataset, n_epochs = n_epochs, val_dataset = val_dataset)
 
-        for d in (discriminator_info, actor_info):
-            for k1, v1 in d.items():
-                for k2, v2 in v1.items():
-                    info[k1][k2] = v2
+        info = (discriminator_info, actor_info)
         return info
     
     def get_action(self, *args):
@@ -1278,7 +1289,7 @@ class VisionAdversarialAdaptAC(BaseModel):
 
 class VisionConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
 
-    feature_fields = ['camera', 'velocity', 'state', 'curvature']
+    feature_fields = ['camera', 'velocity', 'state', 'curvature', 'gps']
     label_fields = ['action', "domain_indicator"]
 
     def __init__(self, pretrain_agent : VisionNaiveRandomization, pretrain_agent_params: dict, ad_agent_params: dict):
@@ -1311,16 +1322,16 @@ class VisionConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
         self.discriminator.to(ptu.device)
 
 class VisionConditionalAdversarialActor(VisionAdversarialActor):
-    feature_fields = ['camera', 'velocity', 'state', 'curvature']
+    feature_fields = ['camera', 'velocity', 'state', 'curvature', 'gps']
     label_fields = ['action', "domain_indicator"]
 
-    def forward(self, img, vel, state, curvature):
+    def forward(self, img, vel, state, curvature, gps):
 
         # Normalize the image first. 
         img = img.permute(0, 3, 1, 2) / 255.
 
         l = self.resnet(img)
-        dis_info = self.discriminator.discriminative_info(state, curvature)
+        dis_info = self.discriminator.discriminative_info(state, curvature, gps)
 
         # logger.info(f"the disinfo = {dis_info}")
         
@@ -1337,7 +1348,7 @@ class VisionConditionalAdversarialActor(VisionAdversarialActor):
 
 class CatDiscriminator(Discriminator):
 
-    feature_fields = ['camera', 'state', 'curvature']
+    feature_fields = ['camera', 'state', 'curvature', 'gps']
     label_fields = ['domain_indicator']
 
     def __init__(self, lr, weight_decay, encoder_output_dim, dis_info_mode, null_init = False):
@@ -1352,6 +1363,8 @@ class CatDiscriminator(Discriminator):
             self.discriminative_info = self.h_only_state
         elif self.dis_info_mode == "only_x_tran":
             self.discriminative_info = self.h_only_x_tran
+        elif self.dis_info_mode == "gps":
+            self.discriminative_info = self.h_global_xy
         else:
             raise ValueError("The input dis_info_mode is invalid")
 
@@ -1359,30 +1372,34 @@ class CatDiscriminator(Discriminator):
         """preprocess the features before passing them to the model.
         note that in the dataloader, there are only RGB images, there is no such a field called latent vector"""
 
-        img, state, curvature = features
-        dis_info = self.discriminative_info(state, curvature)
+        img, state, curvature, gps = features
+        dis_info = self.discriminative_info(state, curvature, gps)
 
         latent_vectors = actor.get_latent(img = img, to_numpy = False)
         latent_vectors = latent_vectors.detach() # cut from the rest of the computation graph
 
         return [latent_vectors, dis_info]
     
-    def h_state_curvature(self, state, curvature):
+    def h_state_curvature(self, state, curvature, gps):
         """extract task relevant information from the state variable and the curvature variable,
         which is discriminative in all the domains"""
         task_info_state = state[:, -2:]        # shape: [batch_size, 2]
         task_info_curvature = curvature        # shape: [batch_size, 3]
         return torch.cat([task_info_state, task_info_curvature], dim=1)  # shape: [batch_size, 5]
     
-    def h_only_curvature(self, state, curvature):
+    def h_global_xy(self, state, curvature, gps):
+        """return the x, y global coordinates"""
+        return gps[:, : 2]
+
+    def h_only_curvature(self, state, curvature, gps):
         """simply return curvature"""
         return curvature
     
-    def h_only_state(self, state, curvature):
+    def h_only_state(self, state, curvature, gps):
         """only return e_psi and lateral deviation from the center line"""
         return state[:, -2:]
     
-    def h_only_x_tran(self, state, curvature):
+    def h_only_x_tran(self, state, curvature, gps):
         """only return x_tran, the lateral deviation as the discriminatie information"""
         return state[:, -2 : -1]
 

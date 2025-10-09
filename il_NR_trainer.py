@@ -301,10 +301,10 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
                 next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
                 fail_counter += 1
-                self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
-                                                   action=expert_ac.astype(np.float32),
-                                                   closed_loop_action=closed_loop_action.astype(np.float32),
-                                                   next_state=next_ob['state'])
+                # self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
+                #                                    action=expert_ac.astype(np.float32),
+                #                                    closed_loop_action=closed_loop_action.astype(np.float32),
+                #                                    next_state=next_ob['state'])
                 if fail_counter >= PATIENCE:
                     truncated = True
 

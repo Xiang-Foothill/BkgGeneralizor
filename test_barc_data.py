@@ -298,14 +298,15 @@ def visualize_barc_states():
     # (we’ll copy only what we need below).
     data = np.load(file_path, mmap_mode="r", allow_pickle=False)
 
-    guess = data["sensors"][:, 4 : 6] # modify this line to find the most sensible entries for the x, y coordinates
+    guess = data["states"][:, 0 : 2] # modify this line to find the most sensible entries for the x, y coordinates
 
-    """so far the best one: data["states"][:, 3: 5]"""
+    """so far the best one for global coordinates: data["states"][:, 3: 5].
+    The most sensible data pairs for v_long, and v_tran: data['states'][0 : 2]"""
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    track_obj = get_track(track_file = "L_track_barc")
-    track_obj.plot_map(ax) 
+    # track_obj = get_track(track_file = "L_track_barc")
+    # track_obj.plot_map(ax) 
     plot_global_points(coord = guess, ax = ax)
 
 if __name__ == "__main__":
-    compare_RGBs()
+    visualize_barc_states()

@@ -10,8 +10,7 @@ class MultiPurposeWriter(SummaryWriter):
                 f'{k}_{v}' for k, v in params.items())
         super().__init__(
             log_dir=log_dir,
-            comment=f'_{model_name}' + (f'_{comment}_' if len(comment) else '') + '_'.join(
-                f'{k}_{v}' for k, v in params.items())
+            comment=self._comment
         )
         self.print_method = print_method if print_method is None else lambda *args, **kwargs: None
 

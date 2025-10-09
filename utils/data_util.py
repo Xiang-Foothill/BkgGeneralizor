@@ -382,6 +382,7 @@ class EfficientReplayBuffer(Dataset, ABC):
         unpack_func: Dict -> Dict. A function that defines how to unpack data.
         """
         def unpack_func(barc_data : Dict):
+            #TODO: find where v_long and v_tran are stored, and unpack them into the dataloader
             T = barc_data["images"].shape[0] # the batch dimension
 
             camera = np.transpose(barc_data["images"], (0, 2, 3, 1))
@@ -390,17 +391,24 @@ class EfficientReplayBuffer(Dataset, ABC):
             cv2.resize(img, (224, 224), interpolation=cv2.INTER_LINEAR)
             for img in camera
         ])
+            camera = camera.astype(np.float32)
+            action = barc_data["actions"].astype(np.float32)
 
             #NOTE: the x, y global coordinates are stored in data["states"][:, 3: 5]
             gps = np.zeros(shape = [T, 3], dtype = np.float32)
             gps[:, : 2] = barc_data['states'][:, 3 : 5]
+            
+            velocity = np.zeros(shape = [T, 3], dtype = np.float32)
+            velocity[:, : 2] = barc_data["states"][ : , : 2]
 
             packed_data = {
             'gps': gps,
-            'velocity': np.zeros(shape = [T, 3], dtype = np.float32),
+            'velocity': velocity,
             'state': np.zeros(shape = [T, 6], dtype = np.float32),
             'curvature': np.zeros(shape = [T, 3], dtype = np.float32),
-            'camera': camera
+            'camera': camera,
+            'action': action,
+            'domain_indicator': np.zeros(shape = [T, 1], dtype = np.float32) # the barc data is by default set to the target domain
         }
             return packed_data
 
