@@ -382,7 +382,6 @@ class EfficientReplayBuffer(Dataset, ABC):
         unpack_func: Dict -> Dict. A function that defines how to unpack data.
         """
         def unpack_func(barc_data : Dict):
-            #TODO: find where v_long and v_tran are stored, and unpack them into the dataloader
             T = barc_data["images"].shape[0] # the batch dimension
 
             camera = np.transpose(barc_data["images"], (0, 2, 3, 1))
@@ -395,11 +394,10 @@ class EfficientReplayBuffer(Dataset, ABC):
             action = barc_data["actions"].astype(np.float32)
 
             #NOTE: the x, y global coordinates are stored in data["states"][:, 3: 5]
-            gps = np.zeros(shape = [T, 3], dtype = np.float32)
-            gps[:, : 2] = barc_data['states'][:, 3 : 5]
+            gps = barc_data['states'][:, 3 : ]
             
-            velocity = np.zeros(shape = [T, 3], dtype = np.float32)
-            velocity[:, : 2] = barc_data["states"][ : , : 2]
+            #TODO: find the position of w_psi, the angular velocity. Currently, the velocity vectors only contain v_long and v_tran. Confrim this with Shengfan.
+            velocity = barc_data["states"][ : , : 3]
 
             packed_data = {
             'gps': gps,

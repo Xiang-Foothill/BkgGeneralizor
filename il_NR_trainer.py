@@ -162,7 +162,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         self.save_profile = save_profile
 
         # an extra parameter
-        self.randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant") # set debug to false to speed up rendering
+        self.randomnizor = linProgRandomnizer(final_percent=0.6, debug = False, mode = "constant") # set debug to false to speed up rendering
         transform = {"camera": self.randomnizor.traditional_randomnize}
 
         self.replay_buffer: 'data_util.EfficientReplayBuffer' = None
@@ -188,7 +188,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         if pretrain_critic:
             self.pretrain_critic()
         
-        self.domain_list = [DOMAIN4, DOMAIN5] # the training-time available domains
+        self.domain_list = [DOMAIN4] # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
 
         # the list used to store evaluation result
@@ -244,8 +244,10 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         info = module.fit(train_dataset=self.replay_buffer,
                           n_epochs=self.n_training_per_epoch if global_step > 0 else self.n_initial_training_epochs,
                           global_step=global_step)
-        for mode, values in info.items():
-            self.writer.do_logging(values, global_step=global_step, mode=mode)
+        # for mode, values in info.items():
+        #     self.writer.do_logging(values, global_step=global_step, mode=mode)
+        
+        return info
     
     def sample_trajectory(self, domain, beta: float, pbar: Optional['tqdm'] = None,
                           max_traj_len=np.inf,
@@ -570,7 +572,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
             completed laps larger than success_laps, the experiment is called to early stop,
             i.e. the system is recognized to converge to stable behavior"""
             history_eval = []
-            def f_stop_flag(evaluate_res):
+            def f_stop_flag(evaluate_res, train_info):
 
                 "find the minimum number of completed laps in all domains"
                 completed_laps = min([evaluate_res[cur_map['name']]["completed_laps"] for cur_map in self.domain_list]) # when deciding early stops, only training-time available domains are considered
@@ -582,9 +584,15 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 
                 logger.info(f"number of consecutive successfull evaluations by far: {len(history_eval)}")
                 if len(history_eval) >= consecutive_steps:
-                    return True
+                    eval_flag = True
                 else:
-                    return False
+                    eval_flag = False
+                
+                train_policy_loss = train_info['train'][f'{self.agent.model_name}_mse_loss']
+                logger.info(f"MSE Loss = {train_policy_loss}")
+                train_flag = train_policy_loss <= 0.045 # make sure that the overall mse loss is low enought
+
+                return train_flag and eval_flag
             
             return False, f_stop_flag
             
@@ -616,7 +624,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 
                 self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
 
-                self.train_module(self.agent, global_step)
+                train_info = self.train_module(self.agent, global_step)
 
                 if self.no_saving:
                     continue
@@ -624,7 +632,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 if global_step % self.eval_freq == 0:
                     evaluate_res = self.evaluate_agent(eval_domains = self.domain_list + self.eval_domain_list)
                     # self.evaluate_randomBkg(global_step=global_step)
-                    stop_flag = f_stop_flag(evaluate_res)
+                    stop_flag = f_stop_flag(evaluate_res = evaluate_res, train_info = train_info)
 
                     # update the evaluation list
                     for domain_name in evaluate_res.keys():
@@ -633,9 +641,10 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                                 self.evaluation_list[domain_name][benchmark] = []
                             self.evaluation_list[domain_name][benchmark].append(evaluate_res[domain_name][benchmark])
                     if stop_flag:
-                        logger.info("//////////////////////// convergence to successful behavior  ////////////////////// early stop triggered !!!!")
+                        logger.info("Convergence to successful behavior! Saving the model and the dataset ....")
                         data_dir = Path(__file__).parent.parent / 'data'
                         self.replay_buffer.export(path = data_dir, name = self.comment) # save the data only when successfully converging to successful behaviors
+                        self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
                         break
 
                     # self.pretrain_save(evaluate_res, cur_beta = cur_beta)
@@ -654,7 +663,6 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 if self.to_PCA and global_step % self.visualize_freq == 0:
                     self.PCA_visualization(self.domain_list + self.eval_domain_list)
                 
-                self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
                 self.cur_epoch = global_step
 
                 # store the training profile

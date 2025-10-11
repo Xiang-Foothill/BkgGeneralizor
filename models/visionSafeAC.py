@@ -909,7 +909,7 @@ class VisionAdversarialActor(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', "domain_indicator"]
 
-    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.):
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.05):
         """
         Model Input: states
         Model Output: actions
@@ -927,8 +927,8 @@ class VisionAdversarialActor(BaseModel):
         self.adv_factor = adv_factor # the factor multiplied by the adversarial loss before adding it to the total loss
 
         # freeze the velocity encoder
-        for p in self.velocity_encoder.parameters():
-            p.requires_grad = False
+        # for p in self.velocity_encoder.parameters():
+        #     p.requires_grad = False
     
     def freeze(self):
         logger.info(f"freeze the {self.model_name}")
@@ -936,12 +936,16 @@ class VisionAdversarialActor(BaseModel):
             p.requires_grad = False
         for p in self.decision.parameters():
             p.requires_grad = False
+        for p in self.velocity_encoder.parameters():
+            p.requires_grad = False
     
     def unfreeze(self):
         logger.info(f"unfreeze the {self.model_name}")
         for p in self.resnet.parameters():
             p.requires_grad = True
         for p in self.decision.parameters():
+            p.requires_grad = True
+        for p in self.velocity_encoder.parameters():
             p.requires_grad = True
 
     def set_discriminator(self, discriminator):
@@ -1129,13 +1133,21 @@ class Discriminator(BaseModel):
         self.dis_info_mode = dis_info_mode
         logger.info(f"The current applied discriminative information is {self.dis_info_mode}")
 
+        #TODO: Make the discriminator deeper to improve its experssive ability
         self.D = nn.Sequential(
-            nn.utils.spectral_norm(nn.Linear(encoder_output_dim + dis_info_dim, 256)),
+            # the first layer block #
+            nn.Linear(encoder_output_dim + dis_info_dim, 256),
             nn.LayerNorm(256),
-            nn.LeakyReLU(0.2),
-            nn.Dropout(p=0.1),
+            nn.ReLU(),
+            nn.Dropout(p=0.1), # add dropouts and layerNorm for the purpose of stable training
 
-            nn.utils.spectral_norm(nn.Linear(256, 1))
+            # the second layer block #
+            nn.Linear(256, 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Dropout(p = 0.1),
+
+            nn.Linear(128, 1)
         )
         # such a discriminator by default set the input size to be 512
 
@@ -1143,7 +1155,7 @@ class Discriminator(BaseModel):
 
         self.optimizer = Adam(self.D.parameters(), lr=lr,
                               weight_decay=weight_decay)
-        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=0.85)
+        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=1.0) # no decay at all time
     
     def freeze(self):
         logger.info(f"freeze the {self.model_name}")
@@ -1271,7 +1283,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         info = defaultdict(lambda: {})
         # first train the discriminator
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
-        dis_epochs = n_epochs * 3 if not global_step else n_epochs 
+        dis_epochs = n_epochs * 2
         discriminator_info = self.discriminator.fit(n_epochs = dis_epochs, train_dataset = train_dataset, actor = self.actor)
 
         #train the actor

@@ -1,6 +1,117 @@
 from matplotlib import pyplot as plt
 import numpy as np
 from matplotlib.colors import Normalize
+import random
+
+def visualize_random_rgb_with_actions(dataloader, num_samples=20, ncols=4, seed=None, figsize=(12, 8)):
+    if seed is not None:
+        random.seed(seed); np.random.seed(seed)
+
+    def _to_numpy(x):
+        try:
+            import torch
+            if isinstance(x, torch.Tensor):
+                x = x.detach().cpu().numpy()
+        except Exception:
+            pass
+        return np.asarray(x)
+
+    def _to_rgb(img):
+        img = _to_numpy(img)
+        # channel-first -> channel-last
+        if img.ndim == 3 and img.shape[0] in (1, 3) and img.shape[-1] not in (1, 3):
+            img = np.transpose(img, (1, 2, 0))
+        if img.dtype != np.uint8:
+            img = img.astype(float)
+            if img.max() > 1.0:
+                img = img / 255.0
+            img = np.clip(img, 0.0, 1.0)
+        return img
+
+    def _first_two(a):
+        a = _to_numpy(a).reshape(-1)
+        return None if a.size < 2 else a[:2]
+
+    samples = []
+
+    # -------- Prefer direct sampling from dataset-like objects --------
+    if hasattr(dataloader, "__len__") and hasattr(dataloader, "__getitem__") and not hasattr(dataloader, "dataset"):
+        N = len(dataloader)
+        if N == 0:
+            raise ValueError("Dataset/buffer is empty.")
+        for idx in random.sample(range(N), k=min(num_samples, N)):
+            item = dataloader[idx]
+            rgb = _to_rgb(item["camera"])
+            act = _first_two(item["action"])
+            if act is None:
+                continue
+            samples.append((rgb, act))
+            if len(samples) >= num_samples:
+                break
+
+    else:
+        # -------- Streaming over a DataLoader or generic iterable --------
+        for batch in dataloader:
+            if isinstance(batch, dict):
+                cams = batch["camera"]; acts = batch["action"]
+                cams_np = _to_numpy(cams); acts_np = _to_numpy(acts)
+
+                # Case A: batched dict → camera is 4D (B, H, W, 3) or (B, 3, H, W)
+                if cams_np.ndim == 4:
+                    B = cams_np.shape[0]
+                    for i in range(B):
+                        rgb = _to_rgb(cams_np[i])
+                        # action can be (B, 2) or (2,)
+                        act = _first_two(acts_np[i] if acts_np.ndim >= 2 and acts_np.shape[0] == B else acts_np)
+                        if act is None:
+                            continue
+                        samples.append((rgb, act))
+                        if len(samples) >= num_samples:
+                            break
+
+                # Case B: single-sample dict → camera is 3D (H, W, 3) or (3, H, W)
+                elif cams_np.ndim == 3:
+                    rgb = _to_rgb(cams_np)
+                    act = _first_two(acts_np)
+                    if act is not None:
+                        samples.append((rgb, act))
+
+                else:
+                    # Unrecognized shape; skip
+                    pass
+
+            else:
+                # Iterable of samples (each a dict)
+                iterable = batch if hasattr(batch, "__iter__") else [batch]
+                for item in iterable:
+                    rgb = _to_rgb(item["camera"])
+                    act = _first_two(item["action"])
+                    if act is None:
+                        continue
+                    samples.append((rgb, act))
+            if len(samples) >= num_samples:
+                break
+
+    if len(samples) == 0:
+        raise ValueError("Could not collect any valid (camera, action) pairs to visualize.")
+
+    # -------- Plot grid --------
+    n = len(samples)
+    ncols = max(1, ncols)
+    nrows = int(np.ceil(n / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, (rgb, act) in zip(axes, samples):
+        ax.imshow(rgb)
+        ax.set_title(f"expert a = [{act[0]:.3f}, {act[1]:.3f}]", fontsize=10)
+        ax.axis('off')
+    for ax in axes[n:]:
+        ax.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+    return fig
 
 def plot_scatter_line(data, xlabel, ylabel):
         """

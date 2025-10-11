@@ -298,7 +298,7 @@ def visualize_barc_states():
     # (we’ll copy only what we need below).
     data = np.load(file_path, mmap_mode="r", allow_pickle=False)
 
-    guess = data["states"][:, 0 : 2] # modify this line to find the most sensible entries for the x, y coordinates
+    guess = data["states"][:, 1 : 3] # modify this line to find the most sensible entries for the x, y coordinates
 
     """so far the best one for global coordinates: data["states"][:, 3: 5].
     The most sensible data pairs for v_long, and v_tran: data['states'][0 : 2]"""

@@ -113,7 +113,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                        discriminator_type = 'no_condition',
                        source_buffer = None,
                        env = None,
-                       visualize = True,
+                       visualize = False,
                        sample_distribution = 'naive_random',
                        **agent_params):
         """
@@ -136,17 +136,19 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         """
         self.carla_params = carla_params
         
-        self.pretrain_encoder_path = BARC2
+        self.pretrain_encoder_path = BARC2 # barc 0 is the one with best sim domain performance
         self.target_domain_len = target_domain_len
         self.target_domains = [DOMAIN11]
 
         self.barc_data_files = [
             "ParaDriveLocalComparison_Sep7_9",
-            "ParaDriveLocalComparison_Sep7_7"
+            "ParaDriveLocalComparison_Sep7_7",
+            "ParaDriveLocalComparison_Oct1_enc_31",
+            "ParaDriveLocalComparison_Oct1_enc_0"
         ]
 
         self.barc_eval_files = [
-            "ParaDriveLocalComparison_Sep7_40"
+            "ParaDriveLocalComparison_Oct10_collection_0.npz"
         ]
 
         self.save_model = save_model
@@ -181,7 +183,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         self.replay_buffer: 'data_util.sourceTargetBalanceBuffer' = None
         self.replay_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
                                         lazy_init=True,
-                                        transform = None, # when doing domain transfer, no need to have any randomization
+                                        transform = transform, # when doing domain transfer, no need to have any randomization
                                         source_buffer = source_buffer)
         
         data_dir = Path(__file__).parent.parent / 'data'
@@ -315,7 +317,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         
         dis_info, actor_info = info
         # hard-code the quantities that we care about
-        self.writer.add_scalar("real_domain MSE", scalar_value = actor_info["val"]["policy_loss"], global_step = global_step)
+        self.writer.add_scalars(main_tag="policy MSE", tag_scalar_dict = {"sim_domain": actor_info['train']["policy_loss"], "real_domain" : actor_info["val"]["policy_loss"]}, global_step = global_step)
         self.writer.add_scalar("train_time adversarial loss", scalar_value = actor_info['train']["adversarial_loss"], global_step = global_step)
         self.writer.add_scalar("train_time disriminator loss", scalar_value = dis_info['train']["discriminator_loss"], global_step = global_step)
     
@@ -713,19 +715,21 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         logger.info("--------------Adversarial Domain Adaptation starts-------------")
 
         for global_step in range(self.starting_step, n_epochs):
-            self.visualize_action_diff(buffer = self.replay_buffer.target_buffer, max_points = 1000)
+            # self.visualize_action_diff(buffer = self.replay_buffer.target_buffer, max_points = 1000)
+            # ptl.visualize_random_rgb_with_actions(dataloader=self.replay_buffer.source_buffer)
+
             logger.info(f"Epoch {global_step} / {n_epochs} for the decision layer [Epoch {global_step + self.pretrain_agent_epochs} / {n_epochs + self.pretrain_agent_epochs} for the whole model]")
             
             self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
             self.train_module(self.agent, global_step)
 
-            cur_beta = self.init_beta * (self.beta ** (global_step - self.starting_step))
+            cur_beta = 0.3 * (self.beta ** (global_step - self.starting_step)) # make the data collection process more stable
             logger.info(f"the current beta is {cur_beta}")
             self.sample_trajectories(beta=cur_beta,
                                      domain_list = self.domain_list,
-                                         total_length=self.eps_len,
-                                         buffer = self.replay_buffer.source_buffer,
-                                         global_step=global_step)
+                                    total_length=self.eps_len,
+                                    buffer = self.replay_buffer.source_buffer,
+                                    global_step=global_step)
 
             if global_step % self.visualize_freq == 0 and self.visualize:
                 self.PCA_visualization()
@@ -752,14 +756,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                 return 0
 
         def preprocess_images(img_list):
-            """Convert list of [H,W,3] np.uint8 images into float32 [B,H,W,3]."""
-            arr = []
-            for img in img_list:
-                x = np.asarray(img, dtype=np.float32)
-                if x.max() > 1.5:  # assume uint8
-                    x /= 255.0
-                arr.append(x)
-            return np.stack(arr, axis=0)
+            # Return raw uint8 -> let get_latent do the /255
+            return np.stack([np.asarray(img, dtype=np.uint8) for img in img_list], axis=0)
 
         def get_latents(buf, n_samples):
             """Randomly sample up to n_samples images from buffer and encode."""
@@ -1041,7 +1039,7 @@ if __name__ == '__main__':
                         choices=tuple(expert_mp.keys()))
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--comment', '-m', type=str, default='')
-    parser.add_argument('--eps_len', type=int, default=1024)
+    parser.add_argument('--eps_len', type=int, default=64)
     parser.add_argument('--randomnize', default = '', choices = ('', 'pure_augment', "random_fetch", "contrast"))
 
     parser.add_argument('--town', type=str, default='L_track_barc')
