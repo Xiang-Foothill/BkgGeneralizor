@@ -18,6 +18,7 @@ from utils.data_util import EfficientReplayBuffer, EfficientReplayBufferPN, sour
 import torch.nn.functional as F
 import copy
 from tqdm import tqdm
+import math
 
 class VisionSafeActor(BaseModel):
     feature_fields = ['camera', 'velocity']
@@ -1118,11 +1119,11 @@ class Discriminator(BaseModel):
             return
 
         #define dis_info_dim based on the dis_info_mode
-        if dis_info_mode == "only_curvature":
+        if dis_info_mode == "only_curvature" or dis_info_mode == "gps_full":
             dis_info_dim = 3
         elif dis_info_mode == "state_curvature":
             dis_info_dim = 5
-        elif dis_info_mode == "only_state" or dis_info_mode == "gps":
+        elif dis_info_mode == "only_state" or dis_info_mode == "gps_xy":
             dis_info_dim = 2
         elif dis_info_mode == "only_x_tran":
             dis_info_dim = 1
@@ -1472,14 +1473,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
 
         # hard code the dis_epochs schedule for now
-        if global_step == 0:
-            dis_epochs = 12
-        
-        elif global_step == 44: # the time at which the adversarial game is stuck with Nush Equilibrium, interrupt with the game
-            dis_epochs = 9
-        else:
-            dis_epochs = 3
-
+        dis_epochs = 12 if global_step == 0 else 5
         discriminator_info = self.discriminator.fit(n_epochs = dis_epochs, train_dataset = train_dataset, val_dataset=None, actor = self.actor)
 
         #train the actor
@@ -1571,8 +1565,10 @@ class CatDiscriminator(Discriminator):
             self.discriminative_info = self.h_only_state
         elif self.dis_info_mode == "only_x_tran":
             self.discriminative_info = self.h_only_x_tran
-        elif self.dis_info_mode == "gps":
+        elif self.dis_info_mode == "gps_xy":
             self.discriminative_info = self.h_global_xy
+        elif self.dis_info_mode == 'gps_full':
+            self.discriminative_info = self.h_gps_full
         else:
             raise ValueError("The input dis_info_mode is invalid")
 
@@ -1598,7 +1594,12 @@ class CatDiscriminator(Discriminator):
     def h_global_xy(self, state, curvature, gps):
         """return the x, y global coordinates"""
         return gps[:, : 2]
-
+    
+    def h_gps_full(self, state, curvature, gps):
+        """Return full GPS, with last column (e_psi) wrapped mod π."""
+        gps[:, -1] = torch.remainder(gps[:, -1], math.pi)
+        return gps
+    
     def h_only_curvature(self, state, curvature, gps):
         """simply return curvature"""
         return curvature

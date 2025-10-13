@@ -689,7 +689,7 @@ class sourceTargetBalanceBuffer():
                                         constants = constants,
                                         name = name)
         if source_buffer is None:
-            self.source_buffer = EfficientReplayBuffer(maxsize=maxsize,
+            self.source_buffer = EfficientReplayBuffer(maxsize=19000, # hardcode the source_buffer's maxsize
                                         lazy_init=lazy_init,
                                         transform = transform,
                                         random_eviction = random_eviction,

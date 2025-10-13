@@ -277,8 +277,10 @@ def plot_global_points(ax, coord, *, color='red', s=20, alpha=0.8, label=None):
 
 def visualize_barc_states():
     """Verify which states are the global x, y coordinates"""
-    data_path = "~/Documents/data"
-    file_name = "ParaDriveLocalComparison_Sep7_9"
+    # data_path = "~/Documents/data"
+    # file_name = "ParaDriveLocalComparison_Sep7_9"
+    data_path = "~/Documents/xiang/BkgGeneralizor/data"
+    file_name = "EfficientReplayBuffer_L_track_barc_BARC1"
     # Expand ~ and normalize inputs
     data_dir = Path(data_path).expanduser()
     data_stem = Path(file_name).stem  # handles "foo" or "foo.npz"
@@ -298,11 +300,13 @@ def visualize_barc_states():
     # (we’ll copy only what we need below).
     data = np.load(file_path, mmap_mode="r", allow_pickle=False)
 
-    guess = data["states"][:, 1 : 3] # modify this line to find the most sensible entries for the x, y coordinates
+    gps = np.array(data["gps"], copy=True)
+    gps[:, 2] = gps[:, 2] % np.pi
+    guess = gps[:, 1 : 3] # modify this line to find the most sensible entries for the x, y coordinates
+    print(np.max(gps[:, 2]))
 
     """so far the best one for global coordinates: data["states"][:, 3: 5].
     The most sensible data pairs for v_long, and v_tran: data['states'][0 : 2]"""
-
     fig, ax = plt.subplots(figsize=(8, 6))
     # track_obj = get_track(track_file = "L_track_barc")
     # track_obj.plot_map(ax) 

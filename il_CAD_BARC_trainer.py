@@ -266,26 +266,26 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         logger.info("----- Evaluation buffer generated -----")
 
         ##### Loading the validation buffer for the discriminator #####
-        self.disc_barc_eval_files = [
-            "ParaDriveLocalComparison_Oct1_enc_28"
-        ]
-        self.disc_sim_eval_file = BARC1
+        # self.disc_barc_eval_files = [
+        #     "ParaDriveLocalComparison_Oct1_enc_28"
+        # ]
+        # self.disc_sim_eval_file = BARC1
 
-        self.disc_eval_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
-                                        lazy_init=True,
-                                        transform = transform,
-                                        source_buffer = None)
+        # self.disc_eval_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
+        #                                 lazy_init=True,
+        #                                 transform = transform,
+        #                                 source_buffer = None)
         
-        self.disc_eval_buffer.source_buffer.load(path=data_dir, name = self.disc_sim_eval_file)
+        # self.disc_eval_buffer.source_buffer.load(path=data_dir, name = self.disc_sim_eval_file)
 
-        logger.info("----- Generating the discriminator evaluation buffer -----")
-        for barc_data_file in self.disc_barc_eval_files:
-            self.disc_eval_buffer.target_buffer.load_barc_data(data_path = data_path, data_name = barc_data_file)
-        logger.info("disc evluation buffer generated")
-
-        logger.debug(f"Size of disc validation set's target buffer: {len(self.disc_eval_buffer.target_buffer)}")
-        logger.debug(f"Size of disc validation set's source buffer: {len(self.disc_eval_buffer.source_buffer)}")
+        # logger.info("----- Generating the discriminator evaluation buffer -----")
+        # for barc_data_file in self.disc_barc_eval_files:
+        #     self.disc_eval_buffer.target_buffer.load_barc_data(data_path = data_path, data_name = barc_data_file)
+        # logger.info("disc evluation buffer generated")
         ##### end of codes for loading the discirminator validation buffer #####
+
+        logger.debug(f"Size of disc validation set's target buffer: {len(self.replay_buffer.target_buffer)}")
+        logger.debug(f"Size of disc validation set's source buffer: {len(self.replay_buffer.source_buffer)}")
 
         self.writer: 'MultiPurposeWriter' = MultiPurposeWriter(model_name=self.agent.model_name,
                                                                log_dir=f"logs/{self.agent.model_name}_{comment or ''}",
@@ -333,7 +333,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
     
     def train_module(self, module : VisionAdversarialAdaptAC, global_step):
         logger.info(f"Training {module.__class__.__name__}...")
-        info = module.fit(train_dataset=self.replay_buffer, policy_val_dataset = self.eval_buffer, disc_val_dataset = self.disc_eval_buffer, # set the eval_buffer to evaluate the agent's performance on the real domain
+        info = module.fit(train_dataset=self.replay_buffer, policy_val_dataset = self.eval_buffer, # set the eval_buffer to evaluate the agent's performance on the real domain
                           n_epochs= self.n_training_per_epoch if global_step > 0 else self.n_initial_training_epochs,
                           global_step=global_step)
         
@@ -752,6 +752,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                                     total_length=self.eps_len,
                                     buffer = self.replay_buffer.source_buffer,
                                     global_step=global_step)
+            logger.debug(f"Size of disc validation set's target buffer: {len(self.replay_buffer.target_buffer)}")
+            logger.debug(f"Size of disc validation set's source buffer: {len(self.replay_buffer.source_buffer)}")
 
             if global_step % self.visualize_freq == 0 and self.visualize:
                 self.PCA_visualization()
@@ -1061,7 +1063,7 @@ if __name__ == '__main__':
                         choices=tuple(expert_mp.keys()))
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--comment', '-m', type=str, default='')
-    parser.add_argument('--eps_len', type=int, default=64)
+    parser.add_argument('--eps_len', type=int, default=128)
     parser.add_argument('--randomnize', default = '', choices = ('', 'pure_augment', "random_fetch", "contrast"))
 
     parser.add_argument('--town', type=str, default='L_track_barc')
