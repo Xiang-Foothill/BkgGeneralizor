@@ -183,7 +183,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         self.replay_buffer: 'data_util.sourceTargetBalanceBuffer' = None
         self.replay_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
                                         lazy_init=True,
-                                        transform = transform, # when doing domain transfer, no need to have any randomization
+                                        transform = transform,
                                         source_buffer = source_buffer)
         
         data_dir = Path(__file__).parent.parent / 'data'
@@ -259,11 +259,33 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         finally:
             logger.info("------- Barc data loading finished ---------")
         
-        logger.info("----- Generating barc evaluation buffer -----")
+        logger.info("----- Generating barc policy evaluation buffer -----")
         self.eval_buffer = data_util.EfficientReplayBuffer(maxsize = 5000, lazy_init=True, transform = None)
         for barc_data_file in self.barc_eval_files:
             self.eval_buffer.load_barc_data(data_path = data_path, data_name = barc_data_file)
         logger.info("----- Evaluation buffer generated -----")
+
+        ##### Loading the validation buffer for the discriminator #####
+        self.disc_barc_eval_files = [
+            "ParaDriveLocalComparison_Oct1_enc_28"
+        ]
+        self.disc_sim_eval_file = BARC1
+
+        self.disc_eval_buffer = data_util.sourceTargetBalanceBuffer(maxsize=replay_buffer_maxsize,
+                                        lazy_init=True,
+                                        transform = transform,
+                                        source_buffer = None)
+        
+        self.disc_eval_buffer.source_buffer.load(path=data_dir, name = self.disc_sim_eval_file)
+
+        logger.info("----- Generating the discriminator evaluation buffer -----")
+        for barc_data_file in self.disc_barc_eval_files:
+            self.disc_eval_buffer.target_buffer.load_barc_data(data_path = data_path, data_name = barc_data_file)
+        logger.info("disc evluation buffer generated")
+
+        logger.debug(f"Size of disc validation set's target buffer: {len(self.disc_eval_buffer.target_buffer)}")
+        logger.debug(f"Size of disc validation set's source buffer: {len(self.disc_eval_buffer.source_buffer)}")
+        ##### end of codes for loading the discirminator validation buffer #####
 
         self.writer: 'MultiPurposeWriter' = MultiPurposeWriter(model_name=self.agent.model_name,
                                                                log_dir=f"logs/{self.agent.model_name}_{comment or ''}",
@@ -311,7 +333,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
     
     def train_module(self, module : VisionAdversarialAdaptAC, global_step):
         logger.info(f"Training {module.__class__.__name__}...")
-        info = module.fit(train_dataset=self.replay_buffer, val_dataset = self.eval_buffer, # set the eval_buffer to evaluate the agent's performance on the real domain
+        info = module.fit(train_dataset=self.replay_buffer, policy_val_dataset = self.eval_buffer, disc_val_dataset = self.disc_eval_buffer, # set the eval_buffer to evaluate the agent's performance on the real domain
                           n_epochs= self.n_training_per_epoch if global_step > 0 else self.n_initial_training_epochs,
                           global_step=global_step)
         

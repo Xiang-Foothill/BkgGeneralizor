@@ -909,7 +909,7 @@ class VisionAdversarialActor(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', "domain_indicator"]
 
-    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.05):
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.4):
         """
         Model Input: states
         Model Output: actions
@@ -1174,13 +1174,13 @@ class Discriminator(BaseModel):
         latent_vectors = latent_vectors.detach() # cut from the rest of the computation graph
         return [latent_vectors]
 
-    def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step = None, actor : VisionAdversarialActor = None):
+    def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset : sourceTargetBalanceBuffer = None, global_step = None, actor : VisionAdversarialActor = None):
         train_examples, train_loss = 0, 0.
         val_examples, val_loss = 0, 0.
 
         train_loader = train_dataset.balanced_dataloader(batch_size=64, shuffle=True, num_workers=0,
                                                 manifest=[self.feature_fields, self.label_fields])
-        val_loader = val_dataset.dataloader(batch_size=64, shuffle=False, num_workers=0,
+        val_loader = val_dataset.balanced_dataloader(batch_size=64, shuffle=False, num_workers=0,
                                             manifest=[self.feature_fields,
                                                       self.label_fields]) if val_dataset is not None else None
         train_scores = defaultdict(lambda: 0.)
@@ -1207,15 +1207,20 @@ class Discriminator(BaseModel):
                 continue
 
             self.eval()
+            actor.eval()
+
             with torch.no_grad():
                 for features, labels in val_loader:
-                    latent_features = self.input_buffer(features)
+                    latent_features = self.input_buffer(features, actor = actor)
                     pred = self(*latent_features)
                     loss, val_info = self.loss(pred, labels)
                     val_loss += loss.item()
                     val_examples += 1
                     for k, v in val_info.items():
                         val_scores[k] += v
+            
+            # val_dis_loss = val_scores['discriminator_loss'] / val_examples # the validation discrimiantor loss
+
         self.scheduler.step()
         info = {
             'train': {f'loss': train_loss / train_examples,
@@ -1233,6 +1238,188 @@ class Discriminator(BaseModel):
 
         return info
     
+    def fit_ES(self, 
+           train_dataset: sourceTargetBalanceBuffer, 
+           n_epochs,  # MAX number of fitting epochs
+           val_dataset: sourceTargetBalanceBuffer = None, 
+           global_step=None, 
+           actor: VisionAdversarialActor = None,
+           debug: bool = False):
+        """
+        Early-stopping (Option 2.B) using EMA of *per-epoch* val_dis_loss.
+        - n_epochs is a hard cap (max epochs).
+        - Early stop when EMA hasn't improved by >= eps for `patience_up` validations.
+        - Early-stopping is based on the mean val_dis_loss over ONLY the batches of the current epoch.
+        - If debug=True, plot per-epoch curves for:
+            * val_dis_loss_epoch
+            * val_dis_loss_ema
+            * train_loss_epoch (mean over batches this epoch)
+        - All other behavior (accumulators, logging, return format) is unchanged.
+        """
+
+        # ---- ES hyperparams ----
+        eps = 5e-2
+        patience_up = 2
+        ema_beta = 0.1  # smoothing factor for EMA over per-epoch val_dis_loss
+
+        # ---- Optional plotting setup ----
+        if debug:
+            import matplotlib.pyplot as plt
+            dbg_epochs = []
+            dbg_val_epoch = []
+            dbg_val_ema = []
+            dbg_train_epoch = []
+
+        # ---- Original accumulators (unchanged for final info) ----
+        train_examples, train_loss = 0, 0.0
+        val_examples, val_loss = 0, 0.0
+        from collections import defaultdict
+        train_scores = defaultdict(lambda: 0.0)
+        val_scores = defaultdict(lambda: 0.0) if val_dataset is not None else None
+
+        train_loader = train_dataset.balanced_dataloader(
+            batch_size=64, shuffle=True, num_workers=0,
+            manifest=[self.feature_fields, self.label_fields]
+        )
+        val_loader = val_dataset.balanced_dataloader(
+                batch_size=64, shuffle=True, num_workers=0,
+                manifest=[self.feature_fields, self.label_fields]
+            ) if val_dataset is not None else None
+
+        actor.freeze()
+
+        # ---- ES state ----
+        val_dis_loss_ema = None
+        best_ema = None
+        no_improve = 0
+        early_stop = False
+
+        for epoch in range(n_epochs):  # n_epochs is a cap
+            self.train()
+
+            # Per-epoch accumulators (for debug plotting only)
+            train_loss_epoch, train_examples_epoch = 0.0, 0
+
+            for features, labels in tqdm(train_loader, desc=f'[epoch {epoch}]'):
+                latent_features = self.input_buffer(features, actor=actor)
+                pred = self(*latent_features)
+                loss, train_info = self.loss(pred, labels)
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
+                self.optimizer.step()
+
+                # Global accumulators (unchanged)
+                train_loss += loss.item()
+                train_examples += 1
+                for k, v in train_info.items():
+                    train_scores[k] += v
+
+                # Per-epoch (for debug)
+                train_loss_epoch += loss.item()
+                train_examples_epoch += 1
+
+            # ---- VALIDATION ----
+            val_dis_loss_epoch = None  # default if no val or metric not present
+            if val_loader is not None:
+                # Per-epoch accumulators for ES decision
+                val_examples_epoch = 0
+                val_scores_epoch = defaultdict(lambda: 0.0)
+
+                self.eval()
+                with torch.no_grad():
+                    for features, labels in val_loader:
+                        latent_features = self.input_buffer(features, actor=actor)
+                        pred = self(*latent_features)
+                        loss, val_info = self.loss(pred, labels)
+
+                        # Global (unchanged) accumulators for final info
+                        val_loss += loss.item()
+                        val_examples += 1
+                        for k, v in val_info.items():
+                            val_scores[k] += v
+
+                        # Per-epoch accumulators (ES decision)
+                        val_examples_epoch += 1
+                        for k, v in val_info.items():
+                            val_scores_epoch[k] += v
+
+                # ---- Compute per-epoch val_dis_loss (NEW) ----
+                if 'discriminator_loss' in val_scores_epoch and val_examples_epoch > 0:
+                    val_dis_loss_epoch = val_scores_epoch['discriminator_loss'] / val_examples_epoch
+
+                    # EMA smoothing over per-epoch values
+                    if val_dis_loss_ema is None:
+                        val_dis_loss_ema = val_dis_loss_epoch
+                        best_ema = val_dis_loss_ema
+                        no_improve = 0
+                    else:
+                        val_dis_loss_ema = ema_beta * val_dis_loss_ema + (1 - ema_beta) * val_dis_loss_epoch
+                        if val_dis_loss_ema < best_ema - eps:
+                            best_ema = val_dis_loss_ema
+                            no_improve = 0
+                        else:
+                            no_improve += 1
+
+                    # ---- Early-stop condition (Option 2.B) ----
+                    if no_improve >= patience_up:
+                        # No logger prints per your request
+                        early_stop = True
+
+            # ---- Debug plotting ----
+            if debug:
+                # Compute this epoch's average training loss (safe division)
+                train_loss_epoch_mean = (train_loss_epoch / train_examples_epoch) if train_examples_epoch else float('nan')
+                dbg_epochs.append(epoch)
+                dbg_train_epoch.append(train_loss_epoch_mean)
+                # Only append val metrics if computed this epoch
+                if val_dis_loss_epoch is not None:
+                    dbg_val_epoch.append(val_dis_loss_epoch)
+                    dbg_val_ema.append(val_dis_loss_ema)
+                else:
+                    dbg_val_epoch.append(float('nan'))
+                    dbg_val_ema.append(float('nan'))
+
+            if early_stop:
+                break
+        if debug:
+            # Draw/update a simple 1-figure, 3-series plot
+            plt.figure(figsize=(6, 4))
+            plt.title("Discriminator ES Debug (per-epoch)")
+            plt.plot(dbg_epochs, dbg_val_epoch, marker='o', label='val_dis_loss_epoch')
+            plt.plot(dbg_epochs, dbg_val_ema, marker='o', label='val_dis_loss_ema')
+            plt.plot(dbg_epochs, dbg_train_epoch, marker='o', label='train_loss_epoch')
+            plt.xlabel("epoch")
+            plt.ylabel("loss")
+            plt.legend()
+            plt.tight_layout()
+            plt.show()
+
+        # Keep scheduler placement unchanged (after loop)
+        self.scheduler.step()
+
+        # ---- Return info (unchanged format; still cumulative means) ----
+        info = {
+            'train': {
+                'loss': train_loss / train_examples if train_examples else float('nan'),
+                **{f'{k}': (v / train_examples if train_examples else float('nan'))
+                for k, v in train_scores.items()}
+            }
+        }
+
+        for k, v in train_scores.items():
+            logger.info(f"{k} = {v / train_examples if train_examples else float('nan')}")
+
+        if val_loader is not None:
+            info['val'] = {
+                'loss': val_loss / val_examples if val_examples else float('nan'),
+                **{f'{k}': (v / val_examples if val_examples else float('nan'))
+                for k, v in val_scores.items()}
+            }
+
+        actor.unfreeze()
+        return info
+
     def forward(self, l):
         return (self.D(l), ) # return the logit value computed by the discriminator
     
@@ -1279,16 +1466,25 @@ class VisionAdversarialAdaptAC(BaseModel):
         self.actor.to(ptu.device)
         self.discriminator.to(ptu.device)
     
-    def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, val_dataset=None, global_step=None):
+    def fit(self, train_dataset: sourceTargetBalanceBuffer, n_epochs, policy_val_dataset=None, disc_val_dataset = None, global_step=None):
         info = defaultdict(lambda: {})
         # first train the discriminator
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
-        dis_epochs = n_epochs * 2
-        discriminator_info = self.discriminator.fit(n_epochs = dis_epochs, train_dataset = train_dataset, actor = self.actor)
+
+        # hard code the dis_epochs schedule for now
+        if global_step == 0:
+            dis_epochs = 12
+        
+        elif global_step == 44: # the time at which the adversarial game is stuck with Nush Equilibrium, interrupt with the game
+            dis_epochs = 9
+        else:
+            dis_epochs = 3
+
+        discriminator_info = self.discriminator.fit(n_epochs = dis_epochs, train_dataset = train_dataset, val_dataset=None, actor = self.actor)
 
         #train the actor
         logger.info(f"///// Training the actor ///// [{self.actor.model_name}]")
-        actor_info = self.actor.fit(train_dataset=train_dataset, n_epochs = n_epochs, val_dataset = val_dataset)
+        actor_info = self.actor.fit(train_dataset=train_dataset, n_epochs = n_epochs, val_dataset = policy_val_dataset)
 
         info = (discriminator_info, actor_info)
         return info
