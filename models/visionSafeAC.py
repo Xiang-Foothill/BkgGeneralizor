@@ -909,7 +909,7 @@ class VisionAdversarialActor(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', "domain_indicator"]
 
-    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.4):
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 1.0):
         """
         Model Input: states
         Model Output: actions
