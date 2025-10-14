@@ -274,7 +274,7 @@ class EfficientReplayBuffer(Dataset, ABC):
         if not os.path.exists(path / f"{name}.npz"):
             logger.warning("Replay buffer save file not found!")
             return
-        logger.debug("Found the saved replay Buffer. Loading replay buffer...")
+        logger.debug(f"Found the saved replay Buffer {path / f'{name}.npz'}. Loading replay buffer...")
 
         data = np.load(path / f"{name}.npz", mmap_mode='r')
         data = {k: v.copy() for k, v in data.items()}

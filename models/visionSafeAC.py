@@ -232,7 +232,7 @@ class VisionNaiveRandomization(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', 'state']
 
-    def __init__(self, ob_dim, ac_dim, size, n_layers, lr=1e-3, weight_decay=1e-5, lam=1., l_dim = 10):
+    def __init__(self, ob_dim, ac_dim, size, n_layers, lr=1e-3, weight_decay=1e-5, lam=1., l_dim = 10, gamma = 0.977):
         """
         Model Input: states
         Model Output: actions
@@ -247,7 +247,7 @@ class VisionNaiveRandomization(BaseModel):
 
         self.optimizer = Adam(itertools.chain(self.resnet.parameters(), self.decision.parameters(), self.velocity_encoder.parameters()), lr=lr,
                               weight_decay=weight_decay)
-        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=1)  # 0.1 ** (1 / 100))
+        self.scheduler = ExponentialLR(optimizer=self.optimizer, gamma=gamma)  # 0.1 ** (1 / 100))
         self.loss_func = nn.MSELoss()
         self.log_sigmoid = nn.LogSigmoid()
         self.lam = lam
@@ -910,7 +910,7 @@ class VisionAdversarialActor(BaseModel):
     feature_fields = ['camera', 'velocity']
     label_fields = ['action', "domain_indicator"]
 
-    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 1.0):
+    def __init__(self, pretrain_agent : VisionNaiveRandomization, adv_factor = 0.75):
         """
         Model Input: states
         Model Output: actions
@@ -1454,7 +1454,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         if pretrain_agent is None:
             return # null
 
-        self.actor = VisionAdversarialActor(pretrain_agent=pretrain_agent)
+        self.actor = VisionAdversarialActor(pretrain_agent=pretrain_agent, adv_factor=ad_agent_params['adv_factor']) # the adv_factor to the actor
 
         # initialize the discriminator
         self.discriminator = Discriminator(lr = ad_agent_params['lr_discriminator'], 
@@ -1473,7 +1473,7 @@ class VisionAdversarialAdaptAC(BaseModel):
         logger.info(f"///// Training the discriminator [{self.discriminator.model_name}] /////")
 
         # hard code the dis_epochs schedule for now
-        dis_epochs = 12 if global_step == 0 else 5
+        dis_epochs = 8 if global_step == 0 else 3
         discriminator_info = self.discriminator.fit(n_epochs = dis_epochs, train_dataset = train_dataset, val_dataset=None, actor = self.actor)
 
         #train the actor
@@ -1509,7 +1509,7 @@ class VisionConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
         if pretrain_agent == None:
             return # the null initialization
         
-        self.actor = VisionConditionalAdversarialActor(pretrain_agent=pretrain_agent)
+        self.actor = VisionConditionalAdversarialActor(pretrain_agent=pretrain_agent, adv_factor=ad_agent_params['adv_factor'])
 
         # initialize the discriminator
         # initialize the discriminator

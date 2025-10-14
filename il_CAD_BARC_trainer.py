@@ -79,13 +79,14 @@ PRETRAIN_SPEED1 = 'L_track_barc_speed_transfer1' # the expert is mpcc-conv, doma
 BARC0 = "L_track_barc_Hardware_params_model" # the expert is mpcc-conv, domain list: DOMAIN4. The expert and simulation environments are configured with time delay.
 BARC1 = "L_track_barc_BARC1"
 BARC2 = "L_track_barc_BARC2"
+BARC3 = "L_track_barc_BARC3"
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
 }
 from il_NR_trainer import DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DOMAIN8, DOMAIN9, DOMAIN11, DOMAIN12, DOMAIN14, FULL_EVALUATION_LIST
 
-class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafeAC):
+class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafeAC):
 
     """classifier is now considered as part of the architecture"""
 
@@ -107,7 +108,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                        pretrain_critic=False,
                        beta_decay_freq=5,
                        save_profile = False,
-                       save_model = True,
+                       save_model = False,
                        to_reload = False,
                        target_domain_len = 5000,
                        discriminator_type = 'no_condition',
@@ -136,7 +137,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         """
         self.carla_params = carla_params
         
-        self.pretrain_encoder_path = BARC2 # barc 0 is the one with best sim domain performance
+        self.pretrain_encoder_path = BARC3 # barc 0 is the one with best sim domain performance
         self.target_domain_len = target_domain_len
         self.target_domains = [DOMAIN11]
 
@@ -186,7 +187,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                                         transform = transform,
                                         source_buffer = source_buffer)
         
-        data_dir = Path(__file__).parent.parent / 'data'
+        data_dir = 'data'
         # only load the source buffer if no source buffer is given as a parameter
         if source_buffer is None:
             self.replay_buffer.source_buffer.load(path = data_dir, name = self.pretrain_encoder_path)
@@ -194,10 +195,10 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         if env is None:
             self.update_carla_params(carla_params)
             self.env = gym.make('barc-v0', **carla_params)
-            self.eps_len = min(replay_buffer_maxsize, eps_len)
         else:
             self.env = env
 
+        self.eps_len = min(replay_buffer_maxsize, eps_len)
         self.expert = expert_cls(dt=carla_params['dt'], t0=carla_params['t0'], track_obj=self.env.get_track())
         self.agent: 'BaseModel' = None
         self.init_beta = 1.0
@@ -304,6 +305,7 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
 
         # modify the learning rate of the pretrained agent for better fine tuning
         pretrain_agent_params['lr'] = ad_agent_params['lr_actor']
+        pretrain_agent_params['gamma'] = 1.0 # no weight decay during fine tuning
         pretrain_agent = VisionNaiveRandomization(**pretrain_agent_params)
 
         logger.info("//// Loading pretrained encoders ////")
@@ -342,6 +344,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
         self.writer.add_scalars(main_tag="policy MSE", tag_scalar_dict = {"sim_domain": actor_info['train']["policy_loss"], "real_domain" : actor_info["val"]["policy_loss"]}, global_step = global_step)
         self.writer.add_scalar("train_time adversarial loss", scalar_value = actor_info['train']["adversarial_loss"], global_step = global_step)
         self.writer.add_scalar("train_time disriminator loss", scalar_value = dis_info['train']["discriminator_loss"], global_step = global_step)
+
+        return info
     
     def label_domain(self, ob, domain):
         """add the field 'domain_v', the domain probability vector to the ob
@@ -743,7 +747,8 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
             logger.info(f"Epoch {global_step} / {n_epochs} for the decision layer [Epoch {global_step + self.pretrain_agent_epochs} / {n_epochs + self.pretrain_agent_epochs} for the whole model]")
             
             self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
-            self.train_module(self.agent, global_step)
+
+            train_result = self.train_module(self.agent, global_step)
 
             cur_beta = 0.3 * (self.beta ** (global_step - self.starting_step)) # make the data collection process more stable
             logger.info(f"the current beta is {cur_beta}")
@@ -752,6 +757,9 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
                                     total_length=self.eps_len,
                                     buffer = self.replay_buffer.source_buffer,
                                     global_step=global_step)
+            
+            eval_results = self.evaluate_agent(eval_domains = self.domain_list, max_laps = 5)
+
             logger.debug(f"Size of disc validation set's target buffer: {len(self.replay_buffer.target_buffer)}")
             logger.debug(f"Size of disc validation set's source buffer: {len(self.replay_buffer.source_buffer)}")
 
@@ -760,9 +768,23 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_VisionSafe
 
             self.cur_epoch = global_step
 
-        if self.save_model:
-            self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
+            if self.judge_check_points(train_result = train_result, eval_results = eval_results):
+                self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data' / 'significant_checkpoints'), name=self.comment)
 
+    def judge_check_points(self, train_result, eval_results):
+        # decide whether the current agent performs good enough
+        dis_info, actor_info = train_result
+        real_policy_loss =  actor_info["val"]["policy_loss"]
+        sim_completed_laps = min(eval_results[domain['name']]['completed_laps'] for domain in self.domain_list)
+
+        constraint1 = sim_completed_laps >= 4 and real_policy_loss <= 0.055
+        constraint2 = real_policy_loss <= 0.015
+        # hard-code the constraint
+        if constraint1 or constraint2:
+            return True
+        else:
+            return False
+    
     def PCA_visualization(self, max_per_domain=150):
         """
         Visualize latent vectors from the RGB images already stored in replay buffers.
@@ -1137,7 +1159,7 @@ if __name__ == '__main__':
         config = yaml.safe_load(f)
 
     agent_params = config['model_hparams']
-    trainer_cls = IL_Trainer_CARLA_VisionAdversarialAdaptationAC
+    trainer_cls = IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC
 
     trainer = trainer_cls(carla_params,
                           expert_cls=expert_mp[params['expert']],
