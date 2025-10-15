@@ -205,9 +205,15 @@ def test_make_hyper_params(hyper_params):
 
 if __name__ == '__main__':
     n_epochs = 15
+    # hyper_params = {
+    #     'adv_factor' : [1.0, 0.75, 0.5],
+    #     'lr_discriminator' : [95e-5, 75e-5, 55e-5, 35e-5, 15e-5],
+    #     'lr_actor': [95e-5, 75e-5, 55e-5, 35e-5, 15e-5]
+    # }
+    # zero adv_factor test
     hyper_params = {
-        'adv_factor' : [1.0, 0.75, 0.5],
-        'lr_discriminator' : [95e-5, 75e-5, 55e-5, 35e-5, 15e-5],
-        'lr_actor': [95e-5, 75e-5, 55e-5, 35e-5, 15e-5]
+        'adv_factor' : [0.0],
+        'lr_discriminator' : [55e-5],
+        'lr_actor': [55e-5]
     }
     grid_search(hyper_params, n_epochs = n_epochs)

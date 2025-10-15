@@ -1104,6 +1104,13 @@ class VisionAdversarialActor(BaseModel):
             collapsed = torch.all(variance < threshold).item()
         return collapsed
     
+    def parse_obs(self, vehicle_state, env_state):
+        """parse the observation from BARC"""
+        return (
+            np.moveaxis(env_state[0], [0, 1, 2], [1, 2, 0]), # make the image channel last
+            np.array([vehicle_state.v.v_long, vehicle_state.v.v_tran, vehicle_state.w.w_psi]) # get velocity vectors, note that in our problem setting, v_tran is part of v
+        )
+
 class Discriminator(BaseModel):
 
     """the discriminator for domain adversarial transfer, this is the most basic version of domain adversarial transfer
@@ -1488,6 +1495,10 @@ class VisionAdversarialAdaptAC(BaseModel):
     
     def get_latent(self, img, to_numpy = True):
         return self.actor.get_latent(img, to_numpy)
+    
+    def parse_obs(self, *args):
+        # forward the arguments to the actor 
+        return self.actor.parse_obs(*args)
 
 class VisionConditionAdversarialAdaptAC(VisionAdversarialAdaptAC):
 
