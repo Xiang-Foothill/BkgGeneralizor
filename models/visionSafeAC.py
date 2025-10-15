@@ -1538,20 +1538,26 @@ class VisionConditionalAdversarialActor(VisionAdversarialActor):
     feature_fields = ['camera', 'velocity', 'state', 'curvature', 'gps']
     label_fields = ['action', "domain_indicator"]
 
-    def forward(self, img, vel, state, curvature, gps):
+    def forward(self, img, vel, state = None, curvature = None, gps = None):
 
         # Normalize the image first. 
         img = img.permute(0, 3, 1, 2) / 255.
 
         l = self.resnet(img)
-        dis_info = self.discriminator.discriminative_info(state, curvature, gps)
 
-        # logger.info(f"the disinfo = {dis_info}")
-        
-        domain_logits, = self.discriminator(l, dis_info)  # allow gradients to flow
+        # find the domain logits when discriminative information is passed in as side information
+        if state is not None and curvature is not None and gps is not None:
+            dis_info = self.discriminator.discriminative_info(state, curvature, gps)
 
-        if self.check_latent_collapse(l):
-            logger.info("WARNING: latent space collapse is detected!")
+            # logger.info(f"the disinfo = {dis_info}")
+            
+            domain_logits, = self.discriminator(l, dis_info)  # allow gradients to flow
+
+            if self.check_latent_collapse(l):
+                logger.info("WARNING: latent space collapse is detected!")
+        else:
+            logger.info("No discriminative info is passed in.")
+            domain_logits = None
 
         v_encoded = self.velocity_encoder(vel)
         combined = torch.cat([l, v_encoded], dim=1)  # shape: [batch_size, latent_dim]
