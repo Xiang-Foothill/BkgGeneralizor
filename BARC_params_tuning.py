@@ -177,10 +177,11 @@ def make_agent_params(hyper_params: Dict[str, Iterable]) -> List[Dict[str, Any]]
 
     return combos
 
-def make_run_name(hp):
+def make_run_name(hp, prefix):
     # keep it short; sanitize floats
+    # prefix: the annotations besides the learning rates
     def f(x): return f"{x:.2g}" if isinstance(x, float) else str(x)
-    return f"lrD{f(hp['lr_discriminator'])}_lrA{f(hp['lr_actor'])}_adv{f(hp['adv_factor'])}"
+    return f"{prefix}_lrD{f(hp['lr_discriminator'])}_lrA{f(hp['lr_actor'])}_adv{f(hp['adv_factor'])}"
 
 def grid_search(hyper_params : dict, n_epochs : int):
     """grid searching throughout the hyper_params dictionary.
@@ -190,7 +191,8 @@ def grid_search(hyper_params : dict, n_epochs : int):
     agent_params_combs = make_agent_params(hyper_params=hyper_params)
     
     for agent_params in agent_params_combs:
-        comment = make_run_name(agent_params)
+        prefix = 'BARC3'
+        comment = make_run_name(agent_params, prefix = prefix)
         common_params['comment'] = comment
         logger.info(f"------------- Verify the hyper params: {comment} ------------- ")
         trainer = IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(**common_params, **agent_params)
@@ -204,8 +206,8 @@ def test_make_hyper_params(hyper_params):
 if __name__ == '__main__':
     n_epochs = 15
     hyper_params = {
-        'adv_factor' : [0.8, 0.25, 0.5],
-        'lr_discriminator' : [5e-4, 1e-4, 1e-5],
-        'lr_actor': [5e-4, 1e-4, 5e-5, 1e-5, 5e-6]
+        'adv_factor' : [1.0, 0.75, 0.5],
+        'lr_discriminator' : [95e-5, 75e-5, 55e-5, 35e-5, 15e-5],
+        'lr_actor': [95e-5, 75e-5, 55e-5, 35e-5, 15e-5]
     }
     grid_search(hyper_params, n_epochs = n_epochs)

@@ -777,7 +777,7 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
         real_policy_loss =  actor_info["val"]["policy_loss"]
         sim_completed_laps = min(eval_results[domain['name']]['completed_laps'] for domain in self.domain_list)
 
-        constraint1 = sim_completed_laps >= 4 and real_policy_loss <= 0.055
+        constraint1 = sim_completed_laps >= 4 and real_policy_loss <= 0.07
         constraint2 = real_policy_loss <= 0.015
         # hard-code the constraint
         if constraint1 or constraint2:
@@ -922,7 +922,7 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
             weatherID = eval_domain["weatherID"]
 
             ob, info = self.env.reset(options={'controller': self.expert, 'spawning': 'fixed'}, map_name =cur_map, weatherID = weatherID)
-
+            
             truncated, terminated = False, False
             lap_times = []
             rews = 0.
