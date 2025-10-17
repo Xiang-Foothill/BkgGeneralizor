@@ -63,7 +63,8 @@ class PIDWrapper:
 
     def setup_pid_controller(self):
         pid_steer_params = PIDParams(dt=self.dt,
-                                     Kp=0.5,
+                                     Kp=0.45, # note that this pid controller contains only P factor, the original value is 0.5
+                                     Kd = 0.05,
                                      u_max=self.state_input_ub.u.u_steer,
                                      u_min=self.state_input_lb.u.u_steer,
                                      du_max=self.input_rate_ub.u.u_steer,
