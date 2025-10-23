@@ -80,6 +80,9 @@ BARC0 = "L_track_barc_Hardware_params_model" # the expert is mpcc-conv, domain l
 BARC1 = "L_track_barc_BARC1"
 BARC2 = "L_track_barc_BARC2"
 BARC3 = "L_track_barc_BARC3"
+BARC4_PID = "L_track_barc_BARC4_pid" # pid expert; domain list: DOMAIN4, DOMAIN1; 1 epoch until convergence
+BARC5_PID = "L_track_barc_BARC5_pid" # pid expert; domain list: DOMAIN4, DOMAIN1; 7 epochs until convergence
+
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
@@ -137,7 +140,7 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
         """
         self.carla_params = carla_params
         
-        self.pretrain_encoder_path = BARC3 # barc 0 is the one with best sim domain performance
+        self.pretrain_encoder_path = BARC5_PID # barc 0 is the one with best sim domain performance
         self.target_domain_len = target_domain_len
         self.target_domains = [DOMAIN11]
 
@@ -149,7 +152,7 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
         ]
 
         self.barc_eval_files = [
-            "ParaDriveLocalComparison_Oct10_collection_0.npz"
+            "Oct21_BARC_PID_val_data"
         ]
 
         self.save_model = save_model
@@ -753,12 +756,12 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
             cur_beta = 0.3 * (self.beta ** (global_step - self.starting_step)) # make the data collection process more stable
             logger.info(f"the current beta is {cur_beta}")
             self.sample_trajectories(beta=cur_beta,
-                                     domain_list = self.domain_list,
+                                     domain_list = [self.domain_list[0]], # only sample from one domain for better simulation stability
                                     total_length=self.eps_len,
                                     buffer = self.replay_buffer.source_buffer,
                                     global_step=global_step)
             
-            eval_results = self.evaluate_agent(eval_domains = self.domain_list, max_laps = 5)
+            eval_results = self.evaluate_agent(eval_domains = [self.domain_list[0]], max_laps = 5) # only evaluate in the first domain for beter simulationn stability
 
             logger.debug(f"Size of disc validation set's target buffer: {len(self.replay_buffer.target_buffer)}")
             logger.debug(f"Size of disc validation set's source buffer: {len(self.replay_buffer.source_buffer)}")
@@ -775,10 +778,10 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
         # decide whether the current agent performs good enough
         dis_info, actor_info = train_result
         real_policy_loss =  actor_info["val"]["policy_loss"]
-        sim_completed_laps = min(eval_results[domain['name']]['completed_laps'] for domain in self.domain_list)
+        sim_completed_laps = eval_results[self.domain_list[0]['name']]['completed_laps'] # min(eval_results[domain['name']]['completed_laps'] for domain in self.domain_list)
 
-        constraint1 = sim_completed_laps >= 4 and real_policy_loss <= 0.07
-        constraint2 = real_policy_loss <= 0.015
+        constraint1 = sim_completed_laps >= 4 and real_policy_loss <= 0.02
+        constraint2 = real_policy_loss <= 0.01
         # hard-code the constraint
         if constraint1 or constraint2:
             return True

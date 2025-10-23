@@ -191,7 +191,7 @@ def grid_search(hyper_params : dict, n_epochs : int):
     agent_params_combs = make_agent_params(hyper_params=hyper_params)
     
     for agent_params in agent_params_combs:
-        prefix = 'BARC3'
+        prefix = 'BARC5_PID'
         comment = make_run_name(agent_params, prefix = prefix)
         common_params['comment'] = comment
         logger.info(f"------------- Verify the hyper params: {comment} ------------- ")
@@ -204,16 +204,18 @@ def test_make_hyper_params(hyper_params):
         logger.debug(make_run_name(agent_param))
 
 if __name__ == '__main__':
-    n_epochs = 15
-    # hyper_params = {
-    #     'adv_factor' : [1.0, 0.75, 0.5],
-    #     'lr_discriminator' : [95e-5, 75e-5, 55e-5, 35e-5, 15e-5],
-    #     'lr_actor': [95e-5, 75e-5, 55e-5, 35e-5, 15e-5]
-    # }
-    # zero adv_factor test
+    n_epochs = 8
     hyper_params = {
-        'adv_factor' : [0.0],
-        'lr_discriminator' : [55e-5],
-        'lr_actor': [55e-5]
+        'adv_factor' : [0.67, 0.84],
+        'lr_discriminator' : [1e-3, 6e-4, 3e-4, 1e-4],
+        'lr_actor': [16e-5, 8e-5, 4e-5, 2e-5, 1e-5, 0.5e-5]
     }
     grid_search(hyper_params, n_epochs = n_epochs)
+
+# the paramters for BARC_PID5 that give decent performances
+# 1. lrD1e-06 lrA0.0001 adv0.5
+# 2. lrD0.001 lrA1e-05 adv0.5
+# 3. lrD0.0001 lrA0.0001 adv1
+# 4. lrD0.001 lrA1e-05 adv1
+# 5. lrD0.001 lrA0.0001 adv1
+# note: 2. 3. 4. turn out to be the parameter regions that capture the best performances

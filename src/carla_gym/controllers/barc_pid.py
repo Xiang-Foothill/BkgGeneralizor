@@ -45,11 +45,11 @@ class PIDWrapper:
         self.state_input_ub = VehicleState(p=ParametricPose(s=2 * self.track_obj.track_length, x_tran=self.track_obj.half_width - VW / 2, e_psi=100),
                                            v=BodyLinearVelocity(v_long=10, v_tran=10),
                                            w=BodyAngularVelocity(w_psi=10),
-                                           u=VehicleActuation(u_a=2.0, u_steer=0.436))
+                                           u=VehicleActuation(u_a=1.0, u_steer=0.436))
         self.state_input_lb = VehicleState(p=ParametricPose(s=-2 * self.track_obj.track_length, x_tran=-(self.track_obj.half_width - VW / 2), e_psi=-100),
                                            v=BodyLinearVelocity(v_long=-10, v_tran=-10),
                                            w=BodyAngularVelocity(w_psi=-10),
-                                           u=VehicleActuation(u_a=-2.0, u_steer=-0.436))
+                                           u=VehicleActuation(u_a=-1.0, u_steer=-0.436))
         self.input_rate_ub = VehicleState(u=VehicleActuation(u_a=20.0, u_steer=4.5))
         self.input_rate_lb = VehicleState(u=VehicleActuation(u_a=-20.0, u_steer=-4.5))
         self.lmpc_params = dict(
@@ -74,7 +74,7 @@ class PIDWrapper:
                                      noise_max=0.2,
                                      noise_min=-0.2)
         pid_speed_params = PIDParams(dt=self.dt,
-                                     Kp=1.5,
+                                     Kp=0.5,
                                      u_max=self.state_input_ub.u.u_a,
                                      u_min=self.state_input_lb.u.u_a,
                                      du_max=self.input_rate_ub.u.u_a,

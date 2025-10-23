@@ -567,7 +567,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
 
     def training_loop(self, n_epochs: int):
 
-        def make_stop_flag(consecutive_steps = 1, success_laps = 5):
+        def make_stop_flag(consecutive_steps = 2, success_laps = 5):
             """early stop mechnism, if we have consecutive evaluations with 
             completed laps larger than success_laps, the experiment is called to early stop,
             i.e. the system is recognized to converge to stable behavior"""
@@ -590,7 +590,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 
                 train_policy_loss = train_info['train'][f'{self.agent.model_name}_mse_loss']
                 logger.info(f"MSE Loss = {train_policy_loss}")
-                train_flag = train_policy_loss <= 0.025 # make sure that the overall mse loss is low enought
+                train_flag = train_policy_loss <= 0.008 # make sure that the overall mse loss is low enought
 
                 return train_flag and eval_flag
             
