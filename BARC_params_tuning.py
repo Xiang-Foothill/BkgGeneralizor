@@ -85,7 +85,7 @@ def make_common_params():
     # To save memory, all the trainers share the same source buffer and the carla gym
 
     trainer_params = {
-    'expert_cls': expert_mp['mpcc-conv'],
+    'expert_cls': expert_mp['pid'], # set the expert to pid
     'discriminator_type' : 'cat_condition',
     'replay_buffer_maxsize': 20000,
     'eps_len': 128,
