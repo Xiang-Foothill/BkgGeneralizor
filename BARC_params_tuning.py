@@ -206,9 +206,9 @@ def test_make_hyper_params(hyper_params):
 if __name__ == '__main__':
     n_epochs = 8
     hyper_params = {
-        'adv_factor' : [0.67, 0.84],
-        'lr_discriminator' : [1e-3, 6e-4, 3e-4, 1e-4],
-        'lr_actor': [16e-5, 8e-5, 4e-5, 2e-5, 1e-5, 0.5e-5]
+        'adv_factor' : [0.67],
+        'lr_discriminator' : [1e-4],
+        'lr_actor': [16e-5,]
     }
     grid_search(hyper_params, n_epochs = n_epochs)
 
@@ -219,3 +219,15 @@ if __name__ == '__main__':
 # 4. lrD0.001 lrA1e-05 adv1
 # 5. lrD0.001 lrA0.0001 adv1
 # note: 2. 3. 4. turn out to be the parameter regions that capture the best performances
+
+# after the second round of tuning the models with priority to be given a shot on BARC:
+# 1. lrD0.0001_lrA0.00016_adv0.67
+# 2. lrD0.001_lrA0.00016_adv0.67
+# 3. lrD0.0006_lrA0.00016_adv0.67
+# 4. lrD0.0006_lrA8e-05_adv0.67
+# 5. lrD0.0003_lrA0.00016_adv0.67
+# 6. lrD0.0003_lrA8e-05_adv0.67
+# 7. lrD0.0001_lrA8e-05_adv0.67
+# 8. lrD0.0001_lrA4e-05_adv0.67
+# 9. lrD0.0001_lrA2e-05_adv0.67
+# 10. lrD0.0006_lrA8e-05_adv0.84

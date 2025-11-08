@@ -744,7 +744,7 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
         logger.info("--------------Adversarial Domain Adaptation starts-------------")
 
         for global_step in range(self.starting_step, n_epochs):
-            # self.visualize_action_diff(buffer = self.replay_buffer.target_buffer, max_points = 1000)
+            self.compare_outputs(buffer = self.eval_buffer, max_points = 1000)
             # ptl.visualize_random_rgb_with_actions(dataloader=self.replay_buffer.source_buffer)
 
             logger.info(f"Epoch {global_step} / {n_epochs} for the decision layer [Epoch {global_step + self.pretrain_agent_epochs} / {n_epochs + self.pretrain_agent_epochs} for the whole model]")
@@ -956,6 +956,80 @@ class IL_Trainer_CARLA_BARC_VisionAdversarialAdaptationAC(IL_Trainer_CARLA_Visio
             result[domain["name"]] = one_iteration_test(domain)
         
         return result
+
+    def compare_outputs(self, buffer, max_points = 5000, sample_stride = 1):
+        # ----- gather data -----
+        N_total = len(buffer)
+        idxs = np.arange(0, N_total, sample_stride)
+        if max_points is not None:
+            idxs = idxs[:max_points]
+
+        gps_list, agent_list, expert_list = [], [], []
+
+        for i in idxs:
+            item = buffer[i]  # assumes __getitem__ returns a dict-like sample
+
+            # gps (x,y)
+            gps_xy = np.asarray(item["gps"][:2], dtype=float)
+            if not np.all(np.isfinite(gps_xy)):
+                continue
+
+            # expert action (first 2 dims)
+            exp_act = np.asarray(item["action"], dtype=float).reshape(-1)
+            if exp_act.size < 2 or not np.all(np.isfinite(exp_act[:2])):
+                continue
+            exp_act = exp_act[:2]
+
+            # agent action via your policy API
+            obs_args = self.agent.parse_carla_obs(obs=item, info={})
+            ag_act, _ = self.agent.get_action(*obs_args)
+            ag_act = np.asarray(ag_act, dtype=float).reshape(-1)
+            if ag_act.size < 2 or not np.all(np.isfinite(ag_act[:2])):
+                continue
+            ag_act = ag_act[:2]
+
+            gps_list.append(gps_xy)
+            expert_list.append(exp_act)
+            agent_list.append(ag_act)
+
+        if len(gps_list) == 0:
+            raise ValueError("No valid (gps, agent_action, expert_action) triplets found to plot.")
+
+        data = {
+            "gps": np.vstack(gps_list),                 # (M, 2)
+            "agent_action": np.vstack(agent_list),      # (M, 2)
+            "expert_action": np.vstack(expert_list),    # (M, 2)
+        }
+
+        from mpclab_common.track import get_track
+        track_obj = get_track("L_track_barc")
+
+        fig = plt.figure()
+        spec = fig.add_gridspec(2, 2)
+        ax_traj = fig.add_subplot(spec[0, :])
+        ax_u_a = fig.add_subplot(spec[1, 0])
+        ax_u_steer = fig.add_subplot(spec[1, 1])
+        ax_traj.plot(data['gps'][:, 0], data['gps'][:, 1])
+        track_obj.plot_map(ax=ax_traj)
+
+        dt = 0.1
+        t = np.arange(data['agent_action'].shape[0]) * dt
+
+        ax_u_a.plot(t, data['agent_action'][:, 0], label='agent')
+        ax_u_a.plot(t, data['expert_action'][:, 0], label='expert')
+        ax_u_a.legend()
+        ax_u_a.set_xlabel('t(s)')
+        ax_u_a.set_ylabel('$u_a$')
+        ax_u_a.set_title("$u_a$")
+
+        ax_u_steer.plot(t, data['agent_action'][:, 1], label='agent')
+        ax_u_steer.plot(t, data['expert_action'][:, 1], label='expert')
+        ax_u_steer.legend()
+        ax_u_steer.set_xlabel('t(s)')
+        ax_u_steer.set_ylabel('$u_{steer}$')
+        ax_u_steer.set_title("$u_{steer}$")
+        plt.show()
+            
 
     def traj_collect(self, eval_domain, actor):
 
