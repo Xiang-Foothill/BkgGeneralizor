@@ -96,6 +96,8 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                        mid_freeze = np.inf,
                        to_PCA = False,
                        save_data = True,
+                       domain_list = [DOMAIN4, DOMAIN1],
+                       env = None,
                        **agent_params):
         """
 
@@ -139,8 +141,12 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         self.eval_rewards_last10 = deque(maxlen=10)
         self.visualize_freq = 5 # the frequency of visualizing latent vectors in terms epoc num
 
-        self.update_carla_params(carla_params)
-        self.env = gym.make('barc-v0', **carla_params)
+        if env is None: # if the environment is none, initiate a new environment object
+            self.update_carla_params(carla_params)
+            self.env = gym.make('barc-v0', **carla_params)
+        else:
+            self.env = env
+        
         self.eps_len = min(replay_buffer_maxsize, eps_len)
 
         self.expert_cls = expert_cls
@@ -162,7 +168,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         self.save_profile = save_profile
 
         # an extra parameter
-        self.randomnizor = linProgRandomnizer(final_percent=0.6, debug = False, mode = "constant") # set debug to false to speed up rendering
+        self.randomnizor = linProgRandomnizer(final_percent=0.6, debug = False, no_background = True, mode = "constant") # set debug to false to speed up rendering
         transform = {"camera": self.randomnizor.traditional_randomnize}
 
         self.replay_buffer: 'data_util.EfficientReplayBuffer' = None
@@ -188,7 +194,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         if pretrain_critic:
             self.pretrain_critic()
         
-        self.domain_list = [DOMAIN4, DOMAIN1] # the training-time available domains
+        self.domain_list = domain_list # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
 
         # the list used to store evaluation result
@@ -592,7 +598,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 logger.info(f"MSE Loss = {train_policy_loss}")
                 train_flag = train_policy_loss <= 0.008 # make sure that the overall mse loss is low enought
 
-                return train_flag and eval_flag
+                return eval_flag # as long as the eval_flag is met, return stop training
             
             return False, f_stop_flag
             
@@ -613,8 +619,8 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 if global_step == self.mid_freeze: # check wehther to freeze the encoders or not
                     self.agent.freeze_encoders()
 
-                cur_beta = self.init_beta * self.beta ** np.ceil(global_step / self.beta_decay_freq)
-                logger.info(f"the curent beta value is {cur_beta}")
+                cur_beta = self.init_beta * (self.beta ** np.ceil(global_step / self.beta_decay_freq))
+                logger.info(f"The curent beta value is {cur_beta}")
                 self.sample_trajectories(beta=cur_beta,
                                          total_length=self.initial_traj_len if global_step - self.starting_step == 0 else self.eps_len,
                                          global_step=global_step)
@@ -751,7 +757,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                     max_traj_len = min(1024, total_length - batch_traj_len)
 
                 sample_domain = self.sample_domain(global_step)
-                traj_len = self.sample_trajectory_with_near_future(domain = sample_domain, beta = beta, pbar=pbar, max_traj_len=max_traj_len)
+                traj_len = self.sample_trajectory(domain = sample_domain, beta = beta, pbar=pbar, max_traj_len=max_traj_len)
                 batch_traj_len += traj_len
                 n_resets += 1
 

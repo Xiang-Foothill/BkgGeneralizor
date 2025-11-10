@@ -22,6 +22,23 @@ import time
 import torch
 import cv2
 
+def to_dataloader(dataset, batch_size: int = 64, shuffle: bool = True, num_workers: int = 0, manifest=None) -> DataLoader:
+        if manifest is None:
+            raise ValueError("Must specify fields to fetch.")
+
+        def collate_fn(batch):
+            """
+            Custom collate function to extract only the requested features and labels.
+            """
+            ret = []
+            for blocks in manifest:
+                ret.append([ptu.from_numpy(np.stack([item[field] for item in batch], axis=0)) for field in blocks])
+            return ret
+
+        return DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
+                          drop_last=True,
+                          collate_fn=collate_fn)
+
 class StackedLoader:
     """For the balanced training for data from the target domain and the source domain"""
     def __init__(self, loader1, loader2):
@@ -678,16 +695,20 @@ class sourceTargetBalanceBuffer():
     
     def __init__(self,
                  maxsize=1_000_000, transform=None, random_eviction: bool = True, constants: dict = None,
-                 lazy_init=True, name=None, source_buffer = None):
+                 lazy_init=True, name=None, source_buffer = None, target_buffer = None):
         self.source_buffer : EfficientReplayBuffer = None
         self.target_buffer :EfficientReplayBuffer = None
 
-        self.target_buffer = EfficientReplayBuffer(maxsize=maxsize // 2,
-                                        lazy_init=lazy_init,
-                                        transform = transform,
-                                        random_eviction = random_eviction,
-                                        constants = constants,
-                                        name = name)
+        if target_buffer is None:
+            self.target_buffer = EfficientReplayBuffer(maxsize=maxsize // 2,
+                                            lazy_init=lazy_init,
+                                            transform = transform,
+                                            random_eviction = random_eviction,
+                                            constants = constants,
+                                            name = name)
+        else:
+            self.target_buffer = target_buffer
+        
         if source_buffer is None:
             self.source_buffer = EfficientReplayBuffer(maxsize=19000, # hardcode the source_buffer's maxsize
                                         lazy_init=lazy_init,
@@ -703,9 +724,9 @@ class sourceTargetBalanceBuffer():
         """The resulted dataloader contains the same amount of data from
         the source domain and the target domain"""
 
-        source_loader = self.source_buffer.dataloader(batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
+        source_loader = to_dataloader(dataset = self.source_buffer, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
                                                 manifest=manifest)
-        target_loader = self.target_buffer.dataloader(batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
+        target_loader = to_dataloader(dataset = self.target_buffer, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers,
                                                 manifest=manifest)
         
         return StackedLoader(source_loader, target_loader)

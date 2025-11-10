@@ -63,7 +63,7 @@ class CarlaConnector:
         # self.client = carla.Client('localhost', 2000)
         self.client = carla.Client(host, port)
         self.client.set_timeout(10.0)
-        logger.debug(f"available maps: {self.client.get_available_maps()}")
+        # logger.debug(f"available maps: {self.client.get_available_maps()}")
         self.weatherID = weatherID
         self.obs_size = 224
         self.dt = 0.1

@@ -4,7 +4,7 @@ model_hparams: # the hyper parameters for the most naive version of domain adver
     lr_actor: !!float 1.e-4 # the original value is 1.5e-6
     
     encoder_output_dim : 512
-    dis_info_mode : "gps_full"
+    dis_info_mode : "state_curvature"
   
     weight_decay: !!float 1e-4
     adv_factor: !!float 0.5 # the product factor of agent's adversarial loss

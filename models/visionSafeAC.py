@@ -324,13 +324,15 @@ class VisionNaiveRandomization(BaseModel):
             weight_decay=self.optimizer.param_groups[0]['weight_decay']
         )
     
-    def get_latent(self, img):
+    def get_latent(self, img, to_numpy = True):
         self.eval()
         img = img.permute(0, 3, 1, 2) / 255.
         l = self.resnet(img)
 
-        return ptu.to_numpy(l)
-
+        if to_numpy:
+            return ptu.to_numpy(l)
+        else:
+            return l
 
 class VisionNaiveRandomization_Visualization(BaseModel):
     """This class is used for visualizing the latent space distribution"""
@@ -1148,14 +1150,7 @@ class Discriminator(BaseModel):
             nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(p=0.1), # add dropouts and layerNorm for the purpose of stable training
-
-            # the second layer block #
-            nn.Linear(256, 128),
-            nn.LayerNorm(128),
-            nn.ReLU(),
-            nn.Dropout(p = 0.1),
-
-            nn.Linear(128, 1)
+            nn.Linear(256, 1)
         )
         # such a discriminator by default set the input size to be 512
 
@@ -1286,15 +1281,15 @@ class Discriminator(BaseModel):
         val_scores = defaultdict(lambda: 0.0) if val_dataset is not None else None
 
         train_loader = train_dataset.balanced_dataloader(
-            batch_size=64, shuffle=True, num_workers=0,
+            batch_size=16, shuffle=True, num_workers=0,
             manifest=[self.feature_fields, self.label_fields]
         )
         val_loader = val_dataset.balanced_dataloader(
-                batch_size=64, shuffle=True, num_workers=0,
+                batch_size=16, shuffle=True, num_workers=0,
                 manifest=[self.feature_fields, self.label_fields]
             ) if val_dataset is not None else None
 
-        actor.freeze()
+        actor.eval()
 
         # ---- ES state ----
         val_dis_loss_ema = None
@@ -1425,7 +1420,6 @@ class Discriminator(BaseModel):
                 for k, v in val_scores.items()}
             }
 
-        actor.unfreeze()
         return info
 
     def forward(self, l):
