@@ -76,6 +76,8 @@ from il_NR_trainer import DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, 
 from il_CAD_trainer import IL_Trainer_CARLA_VisionAdversarialAdaptationAC
 from il_PB_trainer import IL_Trainer_CARLA_Perfect_Baseline
 
+ADVANCED_COLORS = ["black", "darkcyan", "purple", "gold", "lightcoral", "deepskyblue"] # the list of matplotlib colors with better visualization effects
+
 def init_source_buffer(pretrain_model : str) -> data_util.EfficientReplayBuffer:
     """initialize the source domain data buffer"""
     randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant", no_background = True)
@@ -290,11 +292,11 @@ def label_simplifier(label):
         if IL_Trainer_CARLA_Perfect_Baseline.__name__ in label:
             return "Perfect Baseline"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition' in label and "naive_random" in label:
-            return "TCADT(naive random distribution)"
+            return "distribution 1"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition' in label and "first_4m_random" in label:
-            return "TCADT(first-4m heavy distribution)"
+            return "distribution 2"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition' in label and "middle_3m_random" in label:
-            return "TCADT(middle-3m heavy distribution)"
+            return "distribution 3"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition_reweight' in label and "naive_random" in label:
             return "TCADTR(naive random distribution)"
         elif IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label and 'cat_condition_reweight' in label and "first_4m_random" in label:
@@ -303,7 +305,7 @@ def label_simplifier(label):
             return "TCADTR(middle-3m heavy distribution)"
         else:
             return label
-        
+
 def visualize_data_size_experiment(file_name):
     """
     Load and plot the data from a .npz file containing:
@@ -340,7 +342,7 @@ def visualize_data_size_experiment_with_variance(file_name):
       - 'max_traj_lens': a dictionary mapping labels to 2D arrays [n_sizes, n_seeds]
     Plot the mean trajectory length with error bars showing standard deviation.
     """
-
+    
     # Load file
     save_dir = os.path.join("graphs", "raw_data")
     save_path = os.path.join(save_dir, f"{file_name}.npz")
@@ -391,6 +393,7 @@ def visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens, displ
     fig, ax = plt.subplots(figsize=(8, 5))
 
     for label, traj_lens_matrix in max_traj_lens.items():
+        logger.info(label)
         traj_lens_matrix = np.array(traj_lens_matrix)
         means = traj_lens_matrix.mean(axis=1)
         stds = traj_lens_matrix.std(axis=1)
@@ -418,11 +421,345 @@ def visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens, displ
 
     return fig
 
+import matplotlib.pyplot as plt
+import numpy as np
+
+def visualize_data_size_experiment_shadow_two_lines(tgt_domain_sizes, max_traj_lens, display=False):
+    """
+    Plot mean trajectory length with shaded variance region (mean ± std)
+    for selected methods only. Returns a Matplotlib Figure object.
+    """
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    for label, traj_lens_matrix in max_traj_lens.items():
+
+        logger.info(f"Plotting: {label}")
+        traj_lens_matrix = np.array(traj_lens_matrix)
+        means = traj_lens_matrix.mean(axis=1)
+        stds = traj_lens_matrix.std(axis=1)
+
+        clean_label = label_simplifier(label)
+
+        # Style and color selection
+        if IL_Trainer_CARLA_Perfect_Baseline.__name__ in label:
+            color = 'black'
+            line_style = ':'  # dotted for baseline
+        else:
+            color = 'gold'
+            line_style = '-'  # solid for TCDT variant
+
+        # Plot mean ± std
+        ax.plot(
+            tgt_domain_sizes,
+            means,
+            label=clean_label,
+            marker='o', markerfacecolor='none', markeredgewidth=2,
+            linestyle=line_style,
+            linewidth=1.25,
+            color=color
+        )
+        ax.fill_between(
+            tgt_domain_sizes,
+            means - stds,
+            means + stds,
+            alpha=0.25,
+            color=color
+        )
+
+    ax.set_xscale('log')  # log-scale for buffer sizes
+    ax.set_xlabel('Target Domain Buffer Size(log scale)')
+    ax.set_ylabel('Maximum Trajectory Length')
+    ax.set_title('Data Size vs. Adaptation Performance')
+    ax.legend()
+    ax.grid(True, linestyle='--', alpha=0.7)
+    fig.tight_layout()
+
+    if display:
+        plt.show()
+
+    return fig
+
+def visualize_data_size_experiment_column(tgt_domain_sizes, max_traj_lens, display=False):
+    """
+    Plot mean trajectory length with shaded variance region (mean ± std)
+    for multiple methods. One subplot per non-baseline method; the baseline
+    (IL_Trainer_CARLA_Perfect_Baseline) is plotted on every axis.
+    Returns a Matplotlib Figure object.
+    """
+    # Split baseline vs other methods
+    baseline_label = None
+    other_items = []
+    plot_count = 1
+
+    for label, traj_lens_matrix in max_traj_lens.items():
+        if IL_Trainer_CARLA_Perfect_Baseline.__name__ in label:
+            baseline_label = label
+        else:
+            other_items.append((label, traj_lens_matrix))
+
+    # If no baseline is found, just treat everything as "other"
+    if baseline_label is None:
+        other_items = list(max_traj_lens.items())
+
+    n_axes = max(1, len(other_items))
+    fig, axes = plt.subplots(
+        n_axes, 1,
+        figsize=(12, 1.5 * n_axes),
+        sharex=True
+    )
+    if n_axes == 1:
+        axes = [axes]  # make iterable
+
+    # Precompute baseline stats if we have one
+    if baseline_label is not None:
+        baseline_matrix = np.array(max_traj_lens[baseline_label])
+        baseline_means = baseline_matrix.mean(axis=1)
+        baseline_stds = baseline_matrix.std(axis=1)
+        baseline_clean_label = label_simplifier(baseline_label)
+
+    # Loop over non-baseline methods and assign one per axis
+    for ax, (label, traj_lens_matrix) in zip(axes, other_items):
+        logger.info(f"Plotting on new axis: {label}")
+
+        traj_lens_matrix = np.array(traj_lens_matrix)
+        means = traj_lens_matrix.mean(axis=1)
+        stds = traj_lens_matrix.std(axis=1)
+        clean_label = label_simplifier(label)
+
+        # 1) Plot baseline (if available) on every axis
+        if baseline_label is not None:
+            ax.plot(
+                tgt_domain_sizes,
+                baseline_means,
+                label=baseline_clean_label,
+                marker='o', markerfacecolor='none', markeredgewidth=2,
+                linestyle=':',
+                linewidth=1.25,
+                color="black",
+            )
+            ax.fill_between(
+                tgt_domain_sizes,
+                baseline_means - baseline_stds,
+                baseline_means + baseline_stds,
+                alpha=0.25,
+                color="black"
+            )
+
+        # 2) Plot this specific method on this axis
+        #hard code the color for better visualization
+        ax.plot(
+            tgt_domain_sizes,
+            means,
+            label=clean_label,
+            marker='o', markerfacecolor='none', markeredgewidth=2,
+            linestyle='-',
+            linewidth=1.25,
+            color=ADVANCED_COLORS[plot_count],
+        )
+        ax.fill_between(
+            tgt_domain_sizes,
+            means - stds,
+            means + stds,
+            alpha=0.25,
+            color=ADVANCED_COLORS[plot_count],
+        )
+        plot_count += 1
+
+        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.legend()
+
+    # Set common x-label only on bottom axis
+    fig.supylabel("Maximum Trajectory Length", fontsize=15)
+    fig.supxlabel("Target data buffer size", fontsize = 15)
+    fig.tight_layout(rect=[0, 0, 1, 0.97])
+
+    if display:
+        plt.show()
+
+    return fig
+
+def visualize_dis_info_data(data):
+    fig, ax = plt.subplots(figsize=(8, 5))
+    for dis_info_name in data.keys():
+        tgt_domain_sizes, max_traj_lens = data[dis_info_name]["target_domain_sizes"], data[dis_info_name]['max_traj_lens']
+        traj_lens_matrix = np.array(max_traj_lens)
+        means = traj_lens_matrix.mean(axis=1)
+        stds = traj_lens_matrix.std(axis=1)
+        ax.plot(
+            tgt_domain_sizes,
+            means,
+            label=dis_info_name,
+            marker='o', markerfacecolor='none', markeredgewidth=2,
+            linewidth=1.25,
+        )
+        ax.fill_between(
+            tgt_domain_sizes,
+            means - stds,
+            means + stds,
+            alpha=0.25,
+        )
+    ax.set_xscale('log')  # log-scale for buffer sizes
+    ax.set_xlabel('Target Domain Buffer Size(log scale)')
+    ax.set_ylabel('Maximum Trajectory Length')
+    ax.set_title('Data Size vs. Adaptation Performance')
+    ax.legend()
+    ax.grid(True, linestyle='--', alpha=0.7)
+    fig.tight_layout()
+    
+    plt.show()
+
+def extract_dis_info_data(paths_list : list):
+    data = {}
+    for path in paths_list:
+        tgt_domain_sizes, max_traj_lens = extract_data(path)
+        #hard code the line data name
+        if path == "data_size_pseudo_only_state_exp1":
+            key = "TCADT full state"
+        elif path == "data_size_pseudo_only_curvature_exp1":
+            key = "TCADT partially observed state 1"
+        elif path == "data_size_only_x_tran_exp1":
+            key = "TCADT partially observed state 2"
+        
+        target_distribution = ''
+        #find the displayed distribution
+        for label, traj_lens_matrix in max_traj_lens.items():
+            # Filter: only plot Perfect Baseline or selected TCDT variant
+            if (IL_Trainer_CARLA_VisionAdversarialAdaptationAC.__name__ in label
+                    and 'cat_condition' in label
+                    and 'naive_random' in label
+                ):
+                target_distribution = label
+            
+            # hardcode the data to include perfect baseline
+            if IL_Trainer_CARLA_Perfect_Baseline.__name__ in label:
+                data["Perfect Baseline"] = {
+            "target_domain_sizes" : tgt_domain_sizes, "max_traj_lens" : max_traj_lens[label]
+        }
+
+        data[key] = {
+            "target_domain_sizes" : tgt_domain_sizes, "max_traj_lens" : max_traj_lens[target_distribution]
+        }
+    return data
+
+def visualize_dis_info_data_clearer(data):
+    """
+    For each dis_info_name:
+      - If name == "Perfect Baseline": plot on every axis except the last.
+      - Otherwise: plot on one dedicated axis (with shading) AND again on the last axis (without shading).
+    The figure has [number of dis_info_name, 1] axes.
+    """
+    dis_info_names = list(data.keys())
+    n_axes = len(dis_info_names)
+
+    fig, axes = plt.subplots(n_axes, 1, figsize=(15, 3 * n_axes), sharex=True)
+    if n_axes == 1:
+        axes = [axes]
+
+    # Identify baseline and non-baseline names
+    baseline_name = None
+    for name in dis_info_names:
+        if name == "Perfect Baseline":
+            baseline_name = name
+            break
+
+    nonbaseline_names = [name for name in dis_info_names if name != baseline_name]
+    color_index = 3
+    # Precompute stats for each dis_info
+    stats = {}
+    for name in dis_info_names:
+        tgt_domain_sizes = np.array(data[name]["target_domain_sizes"])
+        max_traj_lens = np.array(data[name]["max_traj_lens"])
+        means = max_traj_lens.mean(axis=1)
+        stds = max_traj_lens.std(axis=1)
+        stats[name] = (tgt_domain_sizes, means, stds)
+
+    # 1) Plot the baseline on every axis except the last
+    if baseline_name is not None:
+        tgt_domain_sizes, means, stds = stats[baseline_name]
+        for ax in axes[:-1]:
+            ax.plot(
+                tgt_domain_sizes,
+                means,
+                label=baseline_name,
+                marker='o', markerfacecolor='none', markeredgewidth=2,
+                linewidth=1.25,
+                color = "black"
+            )
+            ax.fill_between(
+                tgt_domain_sizes,
+                means - stds,
+                means + stds,
+                alpha=0.25,
+                color = "black"
+            )
+
+    # 2) Plot each non-baseline on its own axis (independently, with shading)
+    #    We assign them to the first len(nonbaseline_names) axes (except the last),
+    #    assuming we have a baseline so that n_axes = len(nonbaseline_names) + 1.
+    for idx, name in enumerate(nonbaseline_names):
+        # Independent axis for this method:
+        # If we do have a baseline, map to axes[idx] (which is never the last axis).
+        # If no baseline, still map that way; last axis will later get all lines.
+        if idx < n_axes - 1:
+            ax_single = axes[idx]
+        else:
+            # Fallback in weird edge cases, just use the last axis
+            ax_single = axes[-1]
+
+        tgt_domain_sizes, means, stds = stats[name]
+        ax_single.plot(
+            tgt_domain_sizes,
+            means,
+            label=name,
+            marker='o', markerfacecolor='none', markeredgewidth=2,
+            linewidth=1.25,
+            color = ADVANCED_COLORS[color_index]
+        )
+        ax_single.fill_between(
+            tgt_domain_sizes,
+            means - stds,
+            means + stds,
+            alpha=0.25,
+            color = ADVANCED_COLORS[color_index]
+        )
+        color_index += 1
+    # 3) On the last axis, plot every non-baseline line together (NO shading)
+
+    color_index = 3
+    ax_last = axes[-1]
+    for name in nonbaseline_names:
+        tgt_domain_sizes, means, stds = stats[name]
+        ax_last.plot(
+            tgt_domain_sizes,
+            means,
+            label=name,
+            marker='o', markerfacecolor='none', markeredgewidth=2,
+            linewidth=1.25,
+            color = ADVANCED_COLORS[color_index]
+        )
+        # No fill_between here (no variance shading for the last axes)
+        color_index += 1
+    # Formatting
+    for ax in axes:
+        ax.set_xscale('log')
+        ax.grid(True, linestyle='--', alpha=0.7)
+        ax.legend()
+
+    axes[-1].set_xlabel('Target Domain Buffer Size (log scale)', fontsize = 12)
+    fig.supylabel('Maximum Trajectory Length', fontsize = 12)
+    fig.tight_layout(rect=[0.03, 0, 1, 0.97])
+
+    plt.show()
+
 if __name__ == '__main__':
 
     pretrain_model = PRETRAIN_BRIGHT3
-    title = "data_size_only_x_tran_exp1"
-    data_size_experiment_with_variance(pretrain_model, title)
+    title = "datasize_exp_pseudo_res1"
+    # data_size_experiment_with_variance(pretrain_model, title)
 
     # tgt_domain_sizes, max_traj_lens = extract_data(title)
-    #visualize_data_size_experiment_shadow(tgt_domain_sizes, max_traj_lens)
+    # visualize_data_size_experiment_column(tgt_domain_sizes, max_traj_lens, display=True)
+    paths_list = ["data_size_pseudo_only_state_exp1", "data_size_pseudo_only_curvature_exp1", "data_size_only_x_tran_exp1"]
+    data = extract_dis_info_data(paths_list)
+    visualize_dis_info_data_clearer(data)
