@@ -1,0 +1,76 @@
+# maps.yaml
+
+tracks:
+  L_TRACK_BARC1: &L_TRACK_BARC1 "/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1"  # same track shape as L_TRACK_BARC but with fences and trees
+  L_TRACK_BARC2: &L_TRACK_BARC2 "/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2"
+  L_TRACK_BARC4: &L_TRACK_BARC4 "/Game/L_track_barc4/Maps/L_track_barc4/L_track_barc4"
+  L_TRACK_BARC5: &L_TRACK_BARC5 "/Game/L_track_barc5/Maps/L_track_barc5/L_track_barc5"
+  L_TRACK_BARC6: &L_TRACK_BARC6 "/Game/L_track_barc6/Maps/L_track_barc6/L_track_barc6"
+  FOREST_SIM_TRACK1: &FOREST_SIM_TRACK1 "/Game/forest_sim_track1/Maps/forsest_sim_track1/forsest_sim_track1"
+
+domains:
+  DOMAIN1:
+    name: "lawn with fence"
+    map_name: *L_TRACK_BARC1
+    weatherID: 0
+
+  DOMAIN2:
+    name: "lawn when sunset"
+    map_name: *L_TRACK_BARC2
+    weatherID: 3
+
+  DOMAIN4:
+    name: "traffic corns"
+    map_name: *L_TRACK_BARC4
+    weatherID: 0
+
+  DOMAIN5:
+    name: "forests before sunset"
+    map_name: *L_TRACK_BARC5
+    weatherID: 4
+
+  DOMAIN6:
+    name: "bus stops before sunset"
+    map_name: *L_TRACK_BARC6
+    weatherID: 4
+
+  # DOMAIN7 and DOMAIN8 are very similar to each other
+  DOMAIN7:
+    name: "lawn at the noon"
+    map_name: *L_TRACK_BARC2
+    weatherID: 0
+
+  DOMAIN8:
+    name: "bus stops at the noon"
+    map_name: *L_TRACK_BARC6
+    weatherID: 0
+
+  DOMAIN9:
+    name: "fences when the sky is really dark"
+    map_name: *L_TRACK_BARC1
+    weatherID: 5
+
+  DOMAIN10:
+    name: "bus stops when the sky is really dark"
+    map_name: *L_TRACK_BARC6
+    weatherID: 6
+
+  DOMAIN11:
+    name: "traffic corns when the sky is really dark"
+    map_name: *L_TRACK_BARC4
+    weatherID: 6
+
+  DOMAIN12:
+    name: "lawn when sky is really dark"
+    map_name: *L_TRACK_BARC2
+    weatherID: 5
+
+  DOMAIN13:
+    name: "forest_sim_track1_noon"
+    map_name: *FOREST_SIM_TRACK1
+    weatherID: 0
+
+  DOMAIN14:
+    name: "fence in the rain"
+    map_name: *L_TRACK_BARC1
+    weatherID: 7

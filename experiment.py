@@ -20,16 +20,15 @@ from src.carla_gym.controllers.barc_lmpc import LMPCWrapper
 from src.carla_gym.controllers.barc_mpcc_conv import MPCCConvWrapper
 from src.carla_gym.controllers.barc_pid import PIDWrapper
 import models.feedforward
-from models.visionSafeAC import VisionNaiveMultihead, VisionNaiveRandomization, VisionCompleteMultiHead, VisionAdversarialAdaptAC, VisionAdversarialActor, VisionConditionAdversarialAdaptAC, VisionNullAdaptAC, VisionProjConditionAdversarialAC
+from models.TCADT import VisionNaiveRandomization, VisionAdversarialAdaptAC, VisionAdversarialActor, VisionConditionAdversarialAdaptAC, VisionNullAdaptAC, VisionProjConditionAdversarialAC
 from models.base_model import BaseModel
-from domain_randomnization.randomnizor import BkgRandomnizer, linProgRandomnizer, ContrastRandomnizer
+from domain_randomnization.randomnizor import BkgRandomnizer
 from models.adaptAC import WassersteinAdversarialAdaptAC, WassersteinConditionAdversarialAdaptAC, VisionConditionAdversarialReweightAdaptAC
 
 from utils import data_util
 from torch.utils.data import DataLoader
 import utils.pytorch_util as ptu
 from utils.logging.writer import MultiPurposeWriter
-from il_trainer import IL_Trainer_CARLA_VisionSafeAC
 import pickle
 from sklearn.decomposition import PCA
 from torch.utils.tensorboard import SummaryWriter
@@ -78,7 +77,7 @@ from il_PB_trainer import IL_Trainer_CARLA_Perfect_Baseline
 
 def init_source_buffer(pretrain_model : str) -> data_util.EfficientReplayBuffer:
     """initialize the source domain data buffer"""
-    randomnizor = linProgRandomnizer(final_percent=0.2, debug = False, mode = "constant", no_background = True)
+    randomnizor = BkgRandomnizer(final_percent=0.2)
     transform = {"camera": randomnizor.traditional_randomnize}
 
     #initialize the data buffer

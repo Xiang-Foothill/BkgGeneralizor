@@ -19,59 +19,33 @@ from src.carla_gym.controllers.barc_lmpc import LMPCWrapper
 from src.carla_gym.controllers.barc_mpcc_conv import MPCCConvWrapper
 from src.carla_gym.controllers.barc_pid import PIDWrapper
 import models.feedforward
-from models import safeAC, visionSafeAC
 from models.base_model import BaseModel
-from domain_randomnization.randomnizor import BkgRandomnizer, linProgRandomnizer, ContrastRandomnizer
+from domain_randomnization.randomnizor import BkgRandomnizer
 
 from utils import data_util
 from torch.utils.data import DataLoader
 import utils.pytorch_util as ptu
 from utils.logging.writer import MultiPurposeWriter
-from il_trainer import IL_Trainer_CARLA_VisionSafeAC
 import pickle
 from sklearn.decomposition import PCA
 
 from loguru import logger
 from labml import experiment
+import models.TCADT
 
-EVAL_MODEL1 = "L_track_barc_v1.2.3-lam1_230"
-EVAL_MODEL2 = "L_track_barc_v1.4.2-lam1_57"
-EVAL_MODEL3 = "L_track_barc_v1.2.3-lam1"
-
-"""Listed below are available map names"""
 L_TRACK_BARC = "L_track_barc" # the original map without any additional features
 
-L_TRACK_BARC1 = '/Game/L_track_barc1/Maps/L_track_barc1/L_track_barc1' # same track shape as L_TRACK_BARC but with fences and trees
-L_TRACK_BARC2 = '/Game/L_track_barc2/Maps/L_track_barc2/L_track_barc2'
-L_TRACK_BARC4 = '/Game/L_track_barc4/Maps/L_track_barc4/L_track_barc4'
-L_TRACK_BARC5 = '/Game/L_track_barc5/Maps/L_track_barc5/L_track_barc5'
-L_TRACK_BARC6 = '/Game/L_track_barc6/Maps/L_track_barc6/L_track_barc6'
-FOREST_SIM_TRACK1 = '/Game/forest_sim_track1/Maps/forsest_sim_track1/forsest_sim_track1'
+domain_config_path = "./config/domain_config.yaml"
+with open(domain_config_path, 'r') as f:
+    domain_config = yaml.safe_load(f)
+domains = domain_config["domains"] # read the hard-coded domains from the domain_config file
 
 expert_mp = {
     'pid': PIDWrapper,
     'mpcc-conv': MPCCConvWrapper,
 }
 
-DOMAIN1 = {"name": "lawn with fence", "map_name" : L_TRACK_BARC1, "weatherID" : 0}
-DOMAIN2 = {"name": "lawn when sunset", "map_name": L_TRACK_BARC2, "weatherID" : 3}
-DOMAIN4 = {"name": "traffic corns", "map_name": L_TRACK_BARC4, "weatherID" : 0}
-DOMAIN5 = {"name": "forests before sunset", "map_name": L_TRACK_BARC5, "weatherID" : 4}
-DOMAIN6 = {"name": "bus stops before sunset", "map_name": L_TRACK_BARC6, "weatherID" : 4}
-
-# DOMAIN7 and DOMAIN8 are very similar to each other
-DOMAIN7 = {"name": "lawn at the noon", "map_name": L_TRACK_BARC2, "weatherID" : 0}
-DOMAIN8 = {"name": "bus stops at the noon", "map_name": L_TRACK_BARC6, "weatherID" : 0}
-DOMAIN9 = {"name": "fences when the sky is really dark", "map_name": L_TRACK_BARC1, "weatherID": 5}
-DOMAIN10 = {"name": "bus stops when the sky is really dark", "map_name": L_TRACK_BARC6, "weatherID" : 6}
-DOMAIN11 = {"name": "traffic corns when the sky is really dark", "map_name": L_TRACK_BARC4, "weatherID" : 6}
-DOMAIN12 = {"name": "lawn when sky is really dark", "map_name": L_TRACK_BARC2, "weatherID" : 5}
-DOMAIN13 = {"name": "forest_sim_track1_noon", "map_name": FOREST_SIM_TRACK1, "weatherID" : 0}
-DOMAIN14 = {"name": "fence in the rain", "map_name": L_TRACK_BARC1, "weatherID": 7}
-
-FULL_EVALUATION_LIST = [DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DOMAIN8, DOMAIN10, DOMAIN11, DOMAIN12]
-
-class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC):
+class IL_Trainer_CARLA_VisionNaiveRandomizationAC():
 
     def __init__(self, carla_params,
                        expert_cls,
@@ -82,20 +56,13 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                        do_relabel_with_expert=True,
                        n_training_per_epoch=1,
                        comment='',
-                       no_saving=False,
-                       starting_step=0,
                        eval_freq=1,
                        batch_size=1,
                        n_initial_training_epochs=5,
                        beta=0.25,
-                       pretrain_critic=False,
                        beta_decay_freq=5,
-                       save_profile = True,
-                       to_reload = False,
-                       latent = False,
-                       mid_freeze = np.inf,
-                       to_PCA = False,
                        save_data = True,
+                       domain_list = [domains["DOMAIN4"], domains["DOMAIN5"]],
                        **agent_params):
         """
 
@@ -108,18 +75,13 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         @param do_relabel_with_expert:
         @param n_training_per_epoch:
         @param comment:
-        @param no_saving:
-        @param starting_step:
         @param eval_freq:
         @param batch_size:
         @param n_initial_training_epochs:
         @param agent_params:
         """
-
-        self.to_PCA = to_PCA
-        self.pretrain_saved = False
+        self.domain_list = domain_list # the training-time available domains
         self.cur_epoch = 0
-        self.best_avg_lap_time = np.inf
         self.beta_decay_freq = beta_decay_freq
         self.eval_freq = eval_freq
         self.comment = comment
@@ -127,19 +89,15 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         self.do_relabel_with_expert = do_relabel_with_expert
         self.n_training_per_epoch = n_training_per_epoch
         self.batch_size = batch_size
-        self.no_saving = no_saving
         self.n_initial_training_epochs = n_initial_training_epochs
         self.init_beta = 1.0
         self.beta = beta
         # self.use_labml_tracker = use_labml_tracker
         self.agent_params = agent_params
-        self.mid_freeze = mid_freeze
 
         self.n_eval_success, self.n_eval_total = 0, 0
         self.eval_rewards_last10 = deque(maxlen=10)
-        self.visualize_freq = 5 # the frequency of visualizing latent vectors in terms epoc num
 
-        self.update_carla_params(carla_params)
         self.env = gym.make('barc-v0', **carla_params)
         self.eps_len = min(replay_buffer_maxsize, eps_len)
 
@@ -150,19 +108,10 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         self.agent: 'BaseModel' = None
         self.save_data = save_data
 
-        # check whether the user sets latent mode and pretrain mode at the same time
-        if latent:
-            save_profile = False
-            to_reload = False # In the latent visualizaiton mode, it is default not allowed to save or reload any thing
-            plt.figure() # initialize the plot space of latent space
+        self.initialize_agent(**agent_params)
 
-        self.initialize_agent(comment=comment, latent = latent, **agent_params)
-        self.latent = latent
-
-        self.save_profile = save_profile
-
-        # an extra parameter
-        self.randomnizor = linProgRandomnizer(final_percent=0.6, debug = False, mode = "constant") # set debug to false to speed up rendering
+        #set the randomization
+        self.randomnizor = BkgRandomnizer(transfer_percentage = augment_percent) # set debug to false to speed up rendering
         transform = {"camera": self.randomnizor.traditional_randomnize}
 
         self.replay_buffer: 'data_util.EfficientReplayBuffer' = None
@@ -180,44 +129,9 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                                                                )
 
         # Load previous model weights and replay buffer.
-        self.starting_step = starting_step
         self.agent.to(ptu.device)
-        if starting_step > 0:
-            self.agent.load()
-            self.replay_buffer.load()
-        if pretrain_critic:
-            self.pretrain_critic()
-        
-        self.domain_list = [DOMAIN4, DOMAIN1] # the training-time available domains
         self.eval_domain_list = [] # the additional domains other than trianing-time available domains used for evaluation only
-
-        # the list used to store evaluation result
-        self.evaluation_list = {}
-        for domain in (self.domain_list + self.eval_domain_list):
-            self.evaluation_list[domain["name"]] = {}
         
-        if to_reload:
-            self.agent.load(path=Path(__file__).resolve().parent / 'model_data',
-                           name=comment)
-            
-            profile_path = Path(__file__).parent.parent / 'training_profiles' / f"{self.comment}_training_profile.pkl"
-            if profile_path.exists():
-                with open(profile_path, 'rb') as f:
-                    profile_data = pickle.load(f)
-                self.init_beta = profile_data.get('beta', self.beta)
-                self.starting_step = profile_data.get('cur_epoch', self.cur_epoch)
-                self.evaluation_list = profile_data.get('evaluation_list', self.evaluation_list)
-                self.pretrain_saved = True if "pretrain_saved" not in profile_data else profile_data["pretrain_saved"]
-                
-                data_dir = Path(__file__).parent.parent / 'data'
-                self.replay_buffer.load(path = data_dir, name = self.comment)
-
-                logger.info(f"Reloaded training profile from {profile_path}")
-            else:
-                logger.warning(f"No training profile found at {profile_path}. Starting fresh.")
-            
-            if self.starting_step >= self.mid_freeze:
-                self.agent.freeze_encoders()
     
     def label_domain(self, ob, domain):
         """add the field 'domain_v', the domain probability vector to the ob
@@ -229,12 +143,10 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         ob['domain_indicator'] = domain_indicator
         return ob
     
-    def initialize_agent(self, comment, latent, **kwargs):
+    def initialize_agent(self, **kwargs):
         logger.debug(f"{kwargs}")
-        if latent:
-            self.agent =visionSafeAC.VisionNaiveRandomization_Visualization(**kwargs)
-        else:
-            self.agent = visionSafeAC.VisionNaiveRandomization(**kwargs)
+        kwargs["domain_list"] = self.domain_list
+        self.agent = models.TCADT.VisionNaiveRandomization(**kwargs) # set the source domain list as one the agent's class attributes
     
     def initialize_replay_buffer():
         return None
@@ -287,12 +199,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
 
             # try:
             if expert_info['success']:
-                # action = expert_ac if np.random.rand() <= beta else ac
-                # closed_loop_action = beta * expert_ac + (1 - beta) * ac
                 next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
-                # logger.debug(f"Action: {ac}, Expert action: {expert_ac}, v_long: {ob['state'][0]}")
-                # self.add_frame(ob=ob, ac_agent=ac, ac_expert=expert_ac, rew=rew, terminated=terminated,
-                #                truncated=truncated, info=info, next_ob=next_ob)
                 self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
                                              action=expert_ac.astype(np.float32),
                                              closed_loop_action=closed_loop_action.astype(np.float32),
@@ -303,10 +210,6 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
                 next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
                 fail_counter += 1
-                # self.replay_buffer.add_frame(ob, rew, terminated, truncated, info,
-                #                                    action=expert_ac.astype(np.float32),
-                #                                    closed_loop_action=closed_loop_action.astype(np.float32),
-                #                                    next_state=next_ob['state'])
                 if fail_counter >= PATIENCE:
                     truncated = True
 
@@ -403,339 +306,45 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
                 terminated, truncated = False, False
 
         return traj_len
-    
-    def sample_trajectory_with_future(self, domain, beta: float, pbar: Optional['tqdm'] = None,
-                          max_traj_len=np.inf,
-                          PATIENCE=2, TRUNCATE=np.inf):
-        
-        """To be debugged"""
-        cur_map = domain["map_name"]
-        weatherID = domain["weatherID"]
 
-        ob, info = self.env.reset(options={}, map_name=cur_map, weatherID=weatherID)
-
-        self.agent.reset()
-        self.agent.eval()
-        self.expert.reset(options=info)
-
-        terminated, truncated = False, False
-        traj_len = 0
-        fail_counter = 0
-        trajectory = []
-
-        while traj_len < max_traj_len:
-            self.label_domain(ob, domain= domain)
-            ac = self.agent.get_action(*self.agent.parse_carla_obs(ob, info))
-            expert_ac, expert_info = self.expert.step(**ob, **info)
-            expert_ac = np.clip(expert_ac, self.env.action_space.low, self.env.action_space.high)
-            closed_loop_action = beta * expert_ac + (1 - beta) * ac
-
-            if expert_info['success']:
-                next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
-                fail_counter = 0
-            else:
-                logger.warning(f"Expert solved inaccurate with code {expert_info.get('status', 'unknown')}.")
-                next_ob, rew, terminated, truncated, info = self.env.step(closed_loop_action)
-                fail_counter += 1
-                if fail_counter >= PATIENCE:
-                    truncated = True
-
-            # Store all info necessary for add_frame in a dict
-            frame = {
-                'ob': ob,
-                'rew': rew,
-                'terminated': terminated,
-                'truncated': truncated,
-                'info': info,
-                'action': expert_ac.astype(np.float32),
-                'closed_loop_action': closed_loop_action.astype(np.float32),
-                'next_state': next_ob['state'],
-            }
-            trajectory.append(frame)
-
-            traj_len += 1
-            ob = next_ob
-
-            if pbar is not None:
-                pbar.update(1)
-
-            if truncated: # reset the environment if the vehicle is truncated
-                logger.info(f"the vehicle is truncated, now respawning")
-        # Post-processing: add camera_t_1 and camera_t_4
-        for t in range(len(trajectory)):
-            t1 = min(t + 1, len(trajectory) - 1)
-            t4 = min(t + 4, len(trajectory) - 1)
-            trajectory[t]['camera_t_1'] = trajectory[t1]['ob']['camera']
-            trajectory[t]['camera_t_4'] = trajectory[t4]['ob']['camera']
-
-        # Add frames to the replay buffer
-        for frame in trajectory:
-            self.replay_buffer.add_frame(
-                obs=frame['ob'],
-                rews=frame['rew'],
-                terminated=frame['terminated'],
-                truncated=frame['truncated'],
-                info=frame['info'],
-                action=frame['action'],
-                closed_loop_action=frame['closed_loop_action'],
-                next_state=frame['next_state'],
-                camera_t_1=frame['camera_t_1'],
-                camera_t_4=frame['camera_t_4'],
-            )
-        self.display_random_camera_frame_from_buffer()
-
-        return traj_len
-
-    def display_camera_batch_with_actions(self, batch_size=8, seed=None):
-        import random
-        import matplotlib.pyplot as plt
-        """
-        Randomly samples a batch of frames from the replay buffer and visualizes 'camera' images
-        along with their corresponding expert actions.
-
-        Args:
-            batch_size (int): Number of samples to show.
-            seed (int or None): Random seed for reproducibility.
-        """
-        if self.replay_buffer.size == 0:
-            print("Replay buffer is empty.")
-            return
-
-        if seed is not None:
-            random.seed(seed)
-
-        batch_size = min(batch_size, self.replay_buffer.size)
-        indices = random.sample(range(self.replay_buffer.size), batch_size)
-        samples = [self.replay_buffer[i] for i in indices]
-
-        cols = min(batch_size, 4)
-        rows = (batch_size + cols - 1) // cols
-        fig, axs = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
-
-        if rows == 1:
-            axs = [axs]  # flatten single-row case
-        axs = np.array(axs).flatten()
-
-        for ax, sample, idx in zip(axs, samples, indices):
-            image = sample['camera']
-            if image.ndim == 2:
-                image = np.stack([image] * 3, axis=-1)
-            elif image.shape[-1] == 1:
-                image = np.repeat(image, 3, axis=-1)
-
-            action = sample.get('action', None)
-
-            ax.imshow(image.astype(np.uint8))
-            ax.axis('off')
-            ax.set_title(f"Idx {idx}\nAction: {np.round(action, 2)}")
-
-        # Hide any unused axes
-        for i in range(len(samples), len(axs)):
-            axs[i].axis('off')
-
-        plt.tight_layout()
-        plt.show()
-
-    def pretrain_save(self, evaluate_res, cur_beta):
-        """Called to save ideal pretrained model that will be suitable for future experiment:
-        the model that has decent generalization ability, but still not perfect"""
-        completed_laps = np.asarray([evaluate_res[cur_map['name']]["completed_laps"] for cur_map in self.domain_list])
-        mask = (completed_laps >= 5).astype(np.uint8)
-
-        flag1 = np.sum(mask) == 3 and not self.pretrain_saved
-        flag2 = self.cur_epoch == 6 and not self.pretrain_saved
-
-        if flag1:
-            logger.info("//// Find good pretrained object. Auto Save triggered ////")
-            profile_dir = Path(__file__).parent.parent / 'training_profiles' / 'pretrain_agent_profiles'
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            profile_path = profile_dir / f"{self.comment}_training_profile.pkl"
-
-            self.pretrain_saved = True # save the earliest good petrained object
-            self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data' / 'pretrained_agents'), name=self.comment)
-
-            profile_data = {
-                'beta': cur_beta,
-                'cur_epoch': self.cur_epoch,
-                'evaluation_list': self.evaluation_list,  # Not serialized, just kept in structure
-                'domain_list': self.domain_list,
-                "model_name" : self.agent.model_name,
-                'eval_domain_list': self.eval_domain_list
-                }
-            with open(profile_path, 'wb') as f:
-                pickle.dump(profile_data, f)
+    def early_stop(self, evaluate_res) -> bool:
+        """judge whether to early stop"""
+        "find the minimum number of completed laps in all domains"
+        completed_laps = min([evaluate_res[cur_map['name']]["completed_laps"] for cur_map in self.domain_list])
+        return completed_laps >= 5
 
     def training_loop(self, n_epochs: int):
 
-        def make_stop_flag(consecutive_steps = 2, success_laps = 5):
-            """early stop mechnism, if we have consecutive evaluations with 
-            completed laps larger than success_laps, the experiment is called to early stop,
-            i.e. the system is recognized to converge to stable behavior"""
-            history_eval = []
-            def f_stop_flag(evaluate_res, train_info):
-
-                "find the minimum number of completed laps in all domains"
-                completed_laps = min([evaluate_res[cur_map['name']]["completed_laps"] for cur_map in self.domain_list]) # when deciding early stops, only training-time available domains are considered
-
-                if completed_laps < success_laps:
-                    history_eval.clear()
-                else:
-                    history_eval.append(True)
-                
-                logger.info(f"number of consecutive successfull evaluations by far: {len(history_eval)}")
-                if len(history_eval) >= consecutive_steps:
-                    eval_flag = True
-                else:
-                    eval_flag = False
-                
-                train_policy_loss = train_info['train'][f'{self.agent.model_name}_mse_loss']
-                logger.info(f"MSE Loss = {train_policy_loss}")
-                train_flag = train_policy_loss <= 0.008 # make sure that the overall mse loss is low enought
-
-                return train_flag and eval_flag
-            
-            return False, f_stop_flag
-            
-        stop_flag, f_stop_flag = make_stop_flag()
-
+        stop_flag = False
         # Directory for saving training profiles
         profile_dir = Path(__file__).parent.parent / 'training_profiles'
         profile_dir.mkdir(parents=True, exist_ok=True)
         profile_path = profile_dir / f"{self.comment}_training_profile.pkl"
+        
+        for global_step in range(0, n_epochs):
+            logger.info(f"Epoch {global_step} / {n_epochs}")
 
-        try:
-            for global_step in range(self.starting_step, n_epochs):
-                logger.info(f"Epoch {global_step} / {n_epochs}")
-                # self.agent.step_schedule()
-                # self.sample_trajectory(beta=self.beta ** np.ceil(global_step / self.beta_decay_freq),
-                #                        max_traj_len=self.initial_traj_len if global_step == 0 else self.eps_len)
+            cur_beta = self.init_beta * self.beta ** np.ceil(global_step / self.beta_decay_freq)
+            logger.info(f"the curent beta value is {cur_beta}")
+            self.sample_trajectories(beta=cur_beta,
+                                        total_length=self.initial_traj_len if global_step == 0 else self.eps_len,
+                                        global_step=global_step)
 
-                if global_step == self.mid_freeze: # check wehther to freeze the encoders or not
-                    self.agent.freeze_encoders()
-
-                cur_beta = self.init_beta * self.beta ** np.ceil(global_step / self.beta_decay_freq)
-                logger.info(f"the curent beta value is {cur_beta}")
-                self.sample_trajectories(beta=cur_beta,
-                                         total_length=self.initial_traj_len if global_step - self.starting_step == 0 else self.eps_len,
-                                         global_step=global_step)
+            train_info = self.train_module(self.agent, global_step)
+        
+            if global_step % self.eval_freq == 0:
+                evaluate_res = self.evaluate_agent(eval_domains = self.domain_list + self.eval_domain_list)
+                stop_flag = self.early_stop(evaluate_res = evaluate_res)
+                
+                if stop_flag and self.save_data:
+                    logger.info("Convergence to successful behavior! Saving the model and the dataset ....")
+                    data_dir = Path(__file__).parent.parent / 'data'
+                    self.replay_buffer.export(path = data_dir, name = self.comment) # save the data only when successfully converging to successful behaviors
+                    self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
+                    break
             
-                # if global_step % 10 == 0:
-                #     self.replay_buffer.preprocess()
-                
-                self.randomnizor.update_cur(global_step = global_step, total_epochs=n_epochs)
-
-                train_info = self.train_module(self.agent, global_step)
-
-                if self.no_saving:
-                    continue
-            
-                if global_step % self.eval_freq == 0:
-                    evaluate_res = self.evaluate_agent(eval_domains = self.domain_list + self.eval_domain_list)
-                    # self.evaluate_randomBkg(global_step=global_step)
-                    stop_flag = f_stop_flag(evaluate_res = evaluate_res, train_info = train_info)
-
-                    # update the evaluation list
-                    for domain_name in evaluate_res.keys():
-                        for benchmark in evaluate_res[domain_name].keys():
-                            if benchmark not in self.evaluation_list[domain_name]:
-                                self.evaluation_list[domain_name][benchmark] = []
-                            self.evaluation_list[domain_name][benchmark].append(evaluate_res[domain_name][benchmark])
-                    if stop_flag:
-                        logger.info("Convergence to successful behavior! Saving the model and the dataset ....")
-                        data_dir = Path(__file__).parent.parent / 'data'
-                        self.replay_buffer.export(path = data_dir, name = self.comment) # save the data only when successfully converging to successful behaviors
-                        self.agent.export(path=os.path.join(Path(__file__).parent / 'model_data'), name=self.comment)
-                        break
-
-                    # self.pretrain_save(evaluate_res, cur_beta = cur_beta)
-                
-                if self.latent and global_step % self.visualize_freq == 0:
-                    logger.info("collecting data for latent space visualization")
-                    latent_data = self.collect_latent()
-                    plt.clf()
-                    #plot the latent data
-                    for domain_name in latent_data.keys():
-                        latents = latent_data[domain_name]
-                        plt.scatter(latents[:, 0], latents[:, 1], label = domain_name, s = 10)
-                        plt.legend()
-                    plt.show()
-                
-                if self.to_PCA and global_step % self.visualize_freq == 0:
-                    self.PCA_visualization(self.domain_list + self.eval_domain_list)
-                
-                self.cur_epoch = global_step
-
-                # store the training profile
-                if self.save_profile:
-                    profile_data = {
-                    'beta': cur_beta,
-                    'cur_epoch': self.cur_epoch,
-                    'evaluation_list': self.evaluation_list,  # Not serialized, just kept in structure
-                    'domain_list': self.domain_list,
-                    "model_name" : self.agent.model_name,
-                    'eval_domain_list': self.eval_domain_list,
-                    'pretrain_saved': self.pretrain_saved
-                }
-                    with open(profile_path, 'wb') as f:
-                        pickle.dump(profile_data, f)
-                    logger.info(f"Training profile saved to {profile_path}")
-
-        finally:
-            benchmark_list = self.evaluation_list[self.domain_list[0]["name"]].keys()
-
-            fig, axis = plt.subplots(1, len(benchmark_list), figsize=(10, 10))
-
-            for i, benchmark in enumerate(benchmark_list):
-                axis[i].set_title(benchmark)
-                for domain in self.domain_list:
-                    axis[i].plot(self.evaluation_list[domain["name"]][benchmark], label = domain["name"])
-                axis[i].legend()
-
-            fig.suptitle(f"{self.agent.model_name}_{self.comment}")
-
-            self.writer.add_figure(tag='val', figure=fig, global_step=0)
-
-            self.writer.flush()
-            logger.info(f"the images are added to logged in")
-            # self.writer.ntfy(message="Training program terminated.")
+            self.cur_epoch = global_step
     
-    def PCA_visualization(self, collect_domains):
-        """Using the PCA technique to visualize the high-dimensional latent vector space"""
-        """Use PCA to project and visualize latent vectors from all domains in 2D."""
-        logger.info("Collecting data for latent space visualization...")
-        latent_data = self.collect_latent(collect_domains=collect_domains)
-
-        # Step 1: Concatenate all latent vectors and track labels
-        all_latents = []
-        domain_labels = []
-        domain_names = list(latent_data.keys())
-
-        for idx, domain_name in enumerate(domain_names):
-            latents = latent_data[domain_name]  # shape: [N_i, l]
-            all_latents.append(latents)
-            domain_labels.extend([idx] * len(latents))
-
-        all_latents = np.vstack(all_latents)  # shape: [N_total, l]
-        domain_labels = np.array(domain_labels)  # shape: [N_total]
-
-        # Step 2: Apply PCA
-        logger.info("Applying PCA projection...")
-        pca = PCA(n_components=2)
-        latent_2d = pca.fit_transform(all_latents)  # shape: [N_total, 2]
-
-        # Step 3: Plot with color by domain
-        plt.figure(figsize=(8, 6))
-        for idx, domain_name in enumerate(domain_names):
-            mask = (domain_labels == idx)
-            plt.scatter(latent_2d[mask, 0], latent_2d[mask, 1], label=domain_name, s=10)
-
-        plt.title("PCA Visualization of Latent Vectors Across Domains")
-        plt.xlabel("PCA Component 1")
-        plt.ylabel("PCA Component 2")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
 
     def sample_trajectories(self, beta: float, total_length=None, global_step=None):
         logger.info('Sampling trajectories for training...')
@@ -745,7 +354,7 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
         with tqdm(total=total_length, desc='Sampling', unit='steps') as pbar:
             while batch_traj_len < total_length:
 
-                if global_step - self.starting_step <= 2:
+                if global_step <= 2:
                     max_traj_len = min(int(1024 / len(self.domain_list)) + 1, total_length - batch_traj_len)
                 else:
                     max_traj_len = min(1024, total_length - batch_traj_len)
@@ -761,18 +370,8 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
     def sample_domain(self, global_step):
         """If the global step is the first one during training, sample domain randomly, otherwise
         sample the domain with the worst performance"""
-        if global_step - self.starting_step == 0:
-            return np.random.choice(self.domain_list)
-        min_domain = self.domain_list[0]
-        min_traj_len = self.evaluation_list[min_domain['name']]['traj_len'][-1]
 
-        for domain in self.domain_list:
-            cur_traj_len = self.evaluation_list[domain['name']]['traj_len'][-1]
-            if cur_traj_len < min_traj_len:
-                min_traj_len = cur_traj_len
-                min_domain = domain
-        
-        return min_domain
+        return np.random.choice(self.domain_list)
     
     def evaluate_agent(self, eval_domains, global_step = 0, max_laps = 7):
 
@@ -818,50 +417,6 @@ class IL_Trainer_CARLA_VisionNaiveRandomizationAC(IL_Trainer_CARLA_VisionSafeAC)
             result[domain["name"]] = one_iteration_test(domain)
 
         return result
-    
-    def collect_latent(self, collect_domains, max_laps = 1):
-
-        logger.info("Collecting latent vectors")
-
-        def one_domain_collect(domain):
-            self.agent.reset()
-            self.agent.eval()
-            cur_map = domain["map_name"]
-            weatherID = domain["weatherID"]
-
-            ob, info = self.env.reset(options={'controller': self.expert, 'spawning': 'fixed'}, map_name =cur_map, weatherID = weatherID)
-            self.expert.reset(options=info, track_obj = self.env.get_track())
-
-            truncated, terminated = False, False
-            lap_times = []
-            rews = 0.
-            traj_len = 0
-            completed_laps = 0
-
-            latent_list = []
-
-            while not truncated and completed_laps <= max_laps:
-
-                expert_ac, expert_info = self.expert.step(**ob, **info)
-                expert_ac = np.clip(expert_ac, self.env.action_space.low, self.env.action_space.high)
-                ob, rew, terminated, truncated, info = self.env.step(expert_ac)
-                l = self.agent.get_latent(ptu.from_numpy(ob["camera"].copy()[None]))
-                latent_list.append(l)
-                rews += rew
-                traj_len += 1
-                completed_laps = info['lap_no']
-
-                if terminated:
-                    lap_times.append(info['lap_time'])
-
-            return np.concatenate(latent_list, axis = 0)
-        
-        result = {}
-        for domain in collect_domains:
-            logger.info(f"collecting latent vectors in the domain [{domain['name']}]")
-            result[domain["name"]] = one_domain_collect(domain)
-
-        return result
 
 if __name__ == '__main__':
     import argparse
@@ -873,7 +428,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_training_per_epoch', type=int, default=1)
     parser.add_argument('--n_initial_training_epochs', type=int, default=5)
     parser.add_argument('--replay_buffer_maxsize', type=int, default= 21_000) # the original replay buffer maximum size: 102_400
-    parser.add_argument('--expert', '-c', type=str, default='mpcc-conv',
+    parser.add_argument('--expert', '-c', type=str, default='pid',
                         choices=tuple(expert_mp.keys()))
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--comment', '-m', type=str, default='')
@@ -884,7 +439,6 @@ if __name__ == '__main__':
     parser.add_argument('--host', type=str, default='localhost')
     parser.add_argument('--port', type=int, default=2000)
     parser.add_argument('--dt', type=float, default=0.1)
-    parser.add_argument('--no_saving', action='store_true')
     parser.add_argument('--eval_freq', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--beta', type=float, default=0.8)
@@ -894,22 +448,23 @@ if __name__ == '__main__':
     parser.add_argument('--continue', type=int, default=0)
     parser.add_argument('--freeze_weather', action='store_true')
     parser.add_argument('--fix_spawning', action='store_true')
-    parser.add_argument('--pretrain_critic', action='store_true')
     parser.add_argument('--observe', '-o', type=str, default='camera',
                         choices=('camera', 'state'))
 
     parser.add_argument('--experimental', action='store_true')
     parser.add_argument("--generalize_test", action = 'store_true')
     parser.add_argument("--data_collect", action = 'store_true')
-    parser.add_argument("--save_profile", action = "store_true", default = True) # whether to save thet training profiles
-    parser.add_argument("--reload", action = "store_true", default = False)# whether to reload the existing model with the same name to keep training
-    parser.add_argument("--latent", action = "store_true", default = False) # wether to visualize the latent vectors or not
-    parser.add_argument("--mid_freeze", type = int, default = np.inf) # at what point to freeze the encoders
-    parser.add_argument("--to_PCA", action = 'store_true', default = False) # whether to use the PCA technique to visualize the latent vector space
     parser.add_argument("--save_data", action = 'store_true', default = True) # whether to save the data buffer or not
+    
+    parser.add_argument(
+        '-td', '--train_domains',
+        nargs="*",
+        type=str,
+        default=[],
+        help="List of domain names",
+    )
 
-    # parser.add_argument('--ntfy_freq', type=int, default=100)
-
+    # parser.add_argument('--ntfy_freq', type=int, default=100) 
     params = vars(parser.parse_args())
 
     if params['experimental']:
@@ -924,11 +479,12 @@ if __name__ == '__main__':
     np.random.seed(params['seed'])
     torch.manual_seed(params['seed'])
 
-    comment = '_'.join((params['town'], params['comment']))
+    comment = params['comment']
+    
     if params['evaluation']:
         params['reload'] = True # if the user wants to do evaluation, always reload the parameters
 
-    params['comment'] = '_'.join((params['town'], params['comment']))
+    params['comment'] = params["comment"]
 
     t0, dt, dt_sim = 0., 0.1, 0.01
 
@@ -942,7 +498,7 @@ if __name__ == '__main__':
         port=params['port'],
     )
 
-    config_path = "./config/VisionAttentionActor.yaml"
+    config_path = "./config/VisionNaiveRandomization.yaml"
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -950,6 +506,14 @@ if __name__ == '__main__':
     agent_params = config['model_hparams']
     trainer_cls = IL_Trainer_CARLA_VisionNaiveRandomizationAC
 
+    try:
+        train_domains = []
+        for train_domain in params["train_domains"]:
+            train_domains.append(domains[train_domain])
+    
+    except KeyError:
+        raise KeyError(f"Make sure the source domains and the target domains belong to the following list of available domains: {domains.keys()}")
+    
     trainer = trainer_cls(carla_params,
                           expert_cls=expert_mp[params['expert']],
                           replay_buffer_maxsize=params['replay_buffer_maxsize'],
@@ -958,8 +522,6 @@ if __name__ == '__main__':
                           do_relabel_with_expert=True,
                           n_training_per_epoch=params['n_training_per_epoch'],
                           comment=params['comment'],
-                          no_saving=params['no_saving'],
-                          starting_step=params['continue'],
                           eval_freq=params['eval_freq'],
                           batch_size=params['batch_size'],
                           n_initial_training_epochs=params['n_initial_training_epochs'],
@@ -967,28 +529,9 @@ if __name__ == '__main__':
                           # use_labml_tracker=not params['experimental'],
                           # ntfy_freq=params['ntfy_freq'],
                           beta_decay_freq=params['beta_decay_freq'],
-                          pretrain_critic=params['pretrain_critic'],
-                          save_profile = params["save_profile"],
-                          to_reload = params["reload"],
-                          latent = params["latent"],
-                          mid_freeze = params["mid_freeze"],
-                          to_PCA = params["to_PCA"],
                           save_data = params['save_data'],
+                          domain_list = train_domains,
                             **agent_params
                           )
 
-    if params['evaluation']:
-        logger.info(f"the evaluated agent has been trained for {trainer.starting_step} epochs")
-        trainer.evaluate_agent(eval_domains=FULL_EVALUATION_LIST, global_step=0)
-        trainer.PCA_visualization(collect_domains = FULL_EVALUATION_LIST)
-
-    elif params["generalize_test"]:
-        trainer.agent.load(path=Path(__file__).resolve().parent / 'model_data',
-                           name=comment)
-        trainer.gnz_evaluation()
-    
-    elif params["data_collect"]:
-        trainer.data_collect()
-
-    else:
-        trainer.main(n_epochs=params['n_epochs'])
+    trainer.training_loop(n_epochs=params['n_epochs'])

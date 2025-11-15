@@ -120,16 +120,65 @@ class BaseModel(nn.Module):
                            **{f'{self.model_name}_{k}': v / val_examples for k, v in val_scores.items()}}
         return info
 
-    def export(self, path=None, name=None):
-        if not Path(path).exists():
-            os.makedirs(path, exist_ok=True)
-        logger.debug(Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt")
-        torch.save(self.state_dict(), Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt")
+    # def export(self, path=None, name=None):
+    #     if not Path(path).exists():
+    #         os.makedirs(path, exist_ok=True)
+    #     logger.debug(Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt")
+    #     torch.save(self.state_dict(), Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt")
 
+    # def load(self, path=None, name=None):
+    #     file_path = Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt"
+    #     if not file_path.exists():
+    #         logger.warning('Weight files not found.')
+    #         return
+    #     self.load_state_dict(torch.load(file_path, weights_only=True, map_location=ptu.device))
+    #     logger.info(f"Weights loaded successfully from {file_path}!")
+    
+    def export(self, path=None, name=None):
+        path = Path(path)
+        if not path.exists():
+            os.makedirs(path, exist_ok=True)
+
+        fname = f"{f'{name}' if name is not None else ''}.pt" # just use the comment as saved file name
+        file_path = path / fname
+        logger.debug(file_path)
+
+        # collect extra attrs (if any)
+        extra = {}
+        for attr_name in getattr(self, "_extra_attrs_to_save", []):
+            if hasattr(self, attr_name):
+                extra[attr_name] = getattr(self, attr_name)
+
+        checkpoint = {
+            "state_dict": self.state_dict(),
+            "extra_attrs": extra,
+        }
+
+        torch.save(checkpoint, file_path)
+    
     def load(self, path=None, name=None):
-        file_path = Path(path) / f"{self.model_name}{f'_{name}' if name is not None else ''}.pt"
+        path = Path(path)
+        file_path = path / f"{f'{name}' if name is not None else ''}.pt"
         if not file_path.exists():
             logger.warning('Weight files not found.')
             return
-        self.load_state_dict(torch.load(file_path, weights_only=True, map_location=ptu.device))
-        logger.info(f"Weights loaded successfully from {file_path}!")
+
+        # NOTE: don't use weights_only here, because we're saving a dict
+        checkpoint = torch.load(file_path, map_location=ptu.device)
+
+        # backward compatibility: old checkpoints might just be a state_dict
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            state_dict = checkpoint["state_dict"]
+            extra_attrs = checkpoint.get("extra_attrs", {})
+        else:
+            # old format: directly a state_dict
+            state_dict = checkpoint
+            extra_attrs = {}
+
+        self.load_state_dict(state_dict)
+
+        # restore attributes
+        for k, v in extra_attrs.items():
+            setattr(self, k, v)
+
+        logger.info(f"Weights (and attrs) loaded successfully from {file_path}!")

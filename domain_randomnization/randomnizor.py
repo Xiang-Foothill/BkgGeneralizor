@@ -20,114 +20,9 @@ TESTSET_PATH = '../Backgrounds/testSet.pth'
 TEXTURE_PATH = '../Backgrounds/textureSet.pth'
 
 class BkgRandomnizer():
-    def __init__(self, transfer_percentage, debug = False, no_background = False):
-          self.transfer_percentage = transfer_percentage
-          self.write_field = "camera"
-          self.debug = debug
-          self.bkgSet_path = random.choice(BKGSET_PATHS)
-          self.switch_limit = 10000 # after doing randomization for such amount of times, switch to antoher BKG_SET to ensure that the background is diverse enough
-          self.cur_counts = 0
-
-          # Temporary: built-in rendering
-          if self.debug:
-             plt.ion()  # Turn on interactive mode
-             self.fig, self.ax = plt.subplots()
-             self.display_frame = self.ax.imshow(np.zeros((64, 64, 3), dtype=np.uint8))
-             plt.show()
-
-          if no_background:
-             return
-          
-          try:
-              self.bkgset = torch.load(self.bkgSet_path)
-              self.bkgset = self.bkgset.cpu().numpy()
-              logger.info(f"//////////////////////////////////////////// The background set at {self.bkgSet_path} is loaded, it already has {self.bkgset.shape[0]} pictures //////////////////////////////")
-          except:
-              logger.info(f"No bacground image set found in the directory {self.bkgSet_path}")
-            
-          try:
-              self.testSet = torch.load(TESTSET_PATH)
-              self.testSet = self.testSet.cpu().numpy()
-              logger.info(f"//////////////////////////////////////////// The background set at {TESTSET_PATH} is loaded, it already has {self.testSet.shape[0]} pictures //////////////////////////////")
-          except:
-              logger.info(f"No bacground image set found in the directory {TESTSET_PATH}")
-          
-          #try:
-          #     self.textureSet = torch.load(TEXTURE_PATH)
-          #     self.textureSet = self.textureSet.cpu().numpy()
-          #     logger.info(f"//////////////////////////////////////////// The texture set at {TEXTURE_PATH} is loaded, it already has {self.textureSet.shape[0]} pictures //////////////////////////////")
-          # except:
-          #     logger.info(f"No bacground image set found in the directory {TEXTURE_PATH}")
-
-    def bkg_randomnize(self, input_image, image_set, **kwargs):
-        input_mask = kwargs["semantics"]
-
-        setSize = image_set.shape[0]
-        idx = np.random.randint(low = 0, high = setSize)
-
-        bkg = image_set[idx]
-
-        # rescale the background image so that it has the same shape as the input image
-        bkg_pil = Image.fromarray(bkg)  # Convert to PIL Image
-        bkg_resized = bkg_pil.resize((input_image.shape[0], input_image.shape[0]))  # Resize to [H, H]
-        bkg = np.array(bkg_resized)  # Convert back to NumPy array
-
-        return input_image * (1 - input_mask) + bkg * input_mask
-    
-    def change_road_color(self, image, **kwargs):
-      """
-      Augments the road area in the image with a randomized grey/black color and artificial cracks.
-
-      Parameters:
-      - image: np.ndarray of shape (H, W, 3), RGB image.
-      - road_mask_rgb: np.ndarray of shape (H, W, 3), binary road mask (white=road, black=non-road).
-
-      Returns:
-      - Augmented image as np.ndarray of shape (H, W, 3).
-      """
-      road_mask_rgb = 1 - kwargs["semantics"]
-      assert image.shape == road_mask_rgb.shape, "Image and mask shape must match."
-
-      # Convert RGB road mask to binary [H, W] mask
-      road_mask = (np.all(road_mask_rgb == 255, axis=-1)).astype(np.uint8)
-
-      # Predefined set of asphalt-like black/grey tones (discrete and realistic)
-      asphalt_colors = [
-        (30, 30, 30),
-        (45, 45, 45),
-        (60, 60, 60),
-        (75, 75, 75),
-        (90, 90, 90),
-        (105, 105, 105),
-        (120, 120, 120),
-        (40, 40, 40),
-        (80, 80, 80),
-        (100, 100, 100)
-      ]
-
-      # Randomly select one color
-      selected_color = np.array(random.choice(asphalt_colors), dtype=np.uint8)
-
-      # Apply the color to the road region
-      augmented = image.copy()
-      augmented = augmented * (1 - road_mask_rgb) + road_mask_rgb * selected_color
-
-      return augmented
-
-    def road_randomnize(self, input_image, **kwargs):
-       
-      input_mask = 1 - kwargs["semantics"]
-      setSize = self.textureSet.shape[0]
-      idx = np.random.randint(low = 0, high = setSize)
-      texture = self.textureSet[idx]
-
-      # rescale the background image so that it has the same shape as the input image
-      texture_pil = Image.fromarray(texture)  # Convert to PIL Image
-      texture_resized = texture_pil.resize((input_image.shape[0], input_image.shape[0]))  # Resize to [H, H]
-      texture = np.array(texture_resized)  # Convert back to NumPy array
-
-      return input_image * (1 - input_mask) + texture * input_mask
-       
+    def __init__(self, transfer_percentage):
+      self.transfer_percentage = transfer_percentage
+      
     def gaussian_noise(self, image, mean = 0, sigma = 15.0, **kwargs):
 
       """add guassian noise to the input image"""
@@ -222,45 +117,6 @@ class BkgRandomnizer():
 
       blurred_image = cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
       return blurred_image
-
-    def randomnize(self, data):
-        """
-        The interface to the fetch function of the data_loader
-        put all the available randomnize functions here
-        @ data: a dictionary for set of data retrieved from the replay_buffer
-        @ return: an augmented RGB image"""
-
-        image = np.copy(data["camera"])
-        aux_augments = [self.gaussian_noise, self.overExposure, self.underExposure, self.random_cutouts, self.gaussian_blur]
-        aux_augment = random.choice(aux_augments)
-
-        if np.random.uniform(low = 0.0, high = 1.0) < self.transfer_percentage:
-          image = self.bkg_randomnize(input_image=image, image_set = self.bkgset, **data)
-          
-          # check whether to switch to another bkgset or not
-          self.cur_counts = self.cur_counts + 1
-          if self.cur_counts >= self.switch_limit:
-             self.cur_counts = 0
-             logger.info("Hit the switch limit, Loading another Bkgset")
-             self.bkgSet_path = random.choice(BKGSET_PATHS)
-             self.bkgset = torch.load(self.bkgSet_path)
-             self.bkgset = self.bkgset.cpu().numpy()
-             logger.info(f"//////////////////////////////////////////// The background set at {self.bkgSet_path} is loaded, it already has {self.bkgset.shape[0]} pictures //////////////////////////////")
-        
-        if np.random.uniform(low = 0.0, high = 1.0) < self.transfer_percentage:
-           image = self.change_road_color(image, **data)
-
-        if np.random.uniform(low = 0.0, high = 1.0) < self.transfer_percentage:
-          image = aux_augment(image = image, **data)
-        
-        if self.debug:
-            self.display_frame.set_data(image)  # <- update image data
-            time.sleep(0.5)
-            
-            self.fig.canvas.draw()
-            self.fig.canvas.flush_events()
-
-        return image
     
     def traditional_randomnize(self, data):
       image = np.copy(data["camera"])
@@ -269,61 +125,8 @@ class BkgRandomnizer():
 
       if np.random.uniform(low = 0.0, high = 1.0) < self.transfer_percentage:
           image = aux_augment(image = image, **data)
-      
-      if self.debug:
-          self.display_frame.set_data(image)  # <- update image data
-          time.sleep(0.5)
-            
-          self.fig.canvas.draw()
-          self.fig.canvas.flush_events()
 
       return image
-
-    def null_randomnize(self, input_image, input_mask):
-        """a null function used to test the interface"""
-        return input_image * (1 - input_mask)
-
-    def change_obs(self, obs, ifTest = False):
-        """the interface to the BARC_ENV, it will change the observation from the environment directly"""
-
-        if np.random.uniform(low = 0.0, high = 1.0) <= self.transfer_percentage:
-            if ifTest:
-                image_set = self.testSet
-            else:
-                image_set = self.bkgset
-
-            obs[self.write_field] = self.bkg_randomnize(input_image = obs["camera"], image_set = image_set, **obs)
-        
-        if self.debug:
-            self.display_frame.set_data(obs[self.write_field])  # <- update image data
-            self.fig.canvas.draw()
-            self.fig.canvas.flush_events()
-
-class ContrastRandomnizer(BkgRandomnizer):
-    def __init__(self):
-      super().__init__(transfer_percentage=1.0, debug = False)
-
-    def negatives_randomnize(self, data):
-      # to be optimzied: add randomization to the negative examples
-      return data["negatives"]
-
-class linProgRandomnizer(BkgRandomnizer):
-  """progressive randomizer that gradualy increases the amount of images being domain-randomized during training"""
-
-  def __init__(self, final_percent, no_background = False, debug = False, mode = "constant"):
-      """mode constant: the randomizer will behave exactly the same as BkgRandomnizer
-      mode linear: the transfer_percentage will increase constantly"""
-      super().__init__(transfer_percentage = 0.0, debug = debug, no_background = no_background)
-      self.final_percent = final_percent
-      self.mode = mode # choose either "constant" or "linear"
-  
-  def update_cur(self, global_step, total_epochs):
-    if self.mode == "constant":
-      self.transfer_percentage = self.final_percent
-    elif self.mode == "linear":
-      self.transfer_percentage = self.final_percent * (global_step + 1) / total_epochs
-    logger.info(f"curriculum updated: the transfer percentage right now is {self.transfer_percentage}")
-  
 
 
    

@@ -258,19 +258,19 @@ class EfficientReplayBuffer(Dataset, ABC):
         path = path or Path(__file__).resolve().parent.parent / 'data'
         path = Path(path)
         os.makedirs(path, exist_ok=True)
-        name = f"{self.replay_buffer_name}{f'_{name}' if name else ''}"
+        name = f"{f'{name}' if name else ''}"
         logger.debug("Saving Replay Buffer...")
 
         np.savez_compressed(path / f"{name}.npz",
                             size=self.size,
                             **self.consolidate())
 
-        logger.debug("Replay Buffer Saved!")
+        logger.debug(f"Replay Buffer Saved at{path / f'{name}.npz'}")
 
     def load(self, path=None, name=None):
         path = path or Path(__file__).resolve().parent.parent / 'data'
         path = Path(path)
-        name = f"{self.replay_buffer_name}{f'_{name}' if name else ''}"
+        name = f'{name}' if name else ''
         if not os.path.exists(path / f"{name}.npz"):
             logger.warning("Replay buffer save file not found!")
             return
@@ -281,8 +281,6 @@ class EfficientReplayBuffer(Dataset, ABC):
         data.pop('size') # remove the trivial size field from the data
 
         self.size = self.left = self.right = 0
-        # self.size = self.right = data['size']
-        # self.left = 0
 
         self.initialize(batched=True, **data)
 
