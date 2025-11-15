@@ -72,7 +72,7 @@ expert_mp = {
 }
 from il_NR_trainer import DOMAIN1, DOMAIN2, DOMAIN4, DOMAIN5, DOMAIN6, DOMAIN7, DOMAIN8, DOMAIN9, DOMAIN11, DOMAIN12, DOMAIN14, FULL_EVALUATION_LIST
 
-from il_CAD_trainer import IL_Trainer_CARLA_VisionAdversarialAdaptationAC
+from il_TCADT_trainer import IL_Trainer_CARLA_VisionAdversarialAdaptationAC
 from il_PB_trainer import IL_Trainer_CARLA_Perfect_Baseline
 
 def init_source_buffer(pretrain_model : str) -> data_util.EfficientReplayBuffer:
