@@ -117,7 +117,7 @@ Listed below are some significant arguments that can be passed in as command lin
   - **`middle_3m_random`**: Random Samples with a majority from middle section of the track to study mid-track domain discrepancies.
 
 - **`--dis_info_mode` (`-d`)**  
-  Specifies the type of *discriminative information* \(y\) used for latent alignment and adversarial training. This variable affects the conditional distribution \(p(l \mid y)\) and determines how strongly the discriminator can distinguish domains.  
+  Specifies the type of *discriminative information* $y$ used for latent alignment and adversarial training. This variable affects the conditional distribution $p(l \mid y)$ and determines how strongly the discriminator can distinguish domains.  
   Available modes:
   - **`only_curvature`**: Uses only the road curvature signal.
   - **`state_curvature`**: Uses both the vehicle state (lateral transition and heading angle) and road curvature; typically the most informative setting.
