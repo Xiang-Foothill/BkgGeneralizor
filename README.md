@@ -39,12 +39,20 @@ For proper simulation functionality, install CARLA's Python API based on your Py
 
 ### Domain Configruation
 Each visual domain is define as a combinatory of a Carla weather ID and a Carla map. See `config/domain_config.yaml` to see how a domain is defined.
-In our experiments, we use RoadRunner to customize a list of Carla maps, and the domain configuration is defined based on these customize Carla maps. Please go to https://drive.google.com/drive/folders/14teonEY2k9htesbKSOkvE1HP_VTtuUa9?usp=sharing to download the packaged versions of these customized maps. To import these packaged maps into 
+In our experiments, we use RoadRunner to customize a list of Carla maps, and the domain configuration is defined based on these customize Carla maps. Please go to [packaged carla maps](https://drive.google.com/drive/folders/14teonEY2k9htesbKSOkvE1HP_VTtuUa9?usp=sharing) to download the packaged versions of these customized maps. 
+As a shortcut for packages download, you can run the following from the root directory of your carla folder
+```
+pip install gdown
+cd Import
+gdown --folder "https://drive.google.com/drive/folders/14teonEY2k9htesbKSOkvE1HP_VTtuUa9?usp=sharing" -O temp_dl
+mv temp_dl/* .
+rm -r temp_dl
+```
+To import these packaged maps into 
 a packaged version of Carla, please place all the downloaded `.tar.gz` files under the `CARLA_ROOT/Import` directory of your Carla simulator, and run the following from the root directory
 of your Carla simulator:
 
 ```
-cd Import
 ./ImportAssets.sh
 ```
 
