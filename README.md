@@ -1,4 +1,4 @@
-# TCADT Implementation For Vision-based Imitation Learning
+# SCAL Implementation For Vision-based Imitation Learning
 This repository contains the implementation for *Task-Conditional Adversarial Learning: A Generalizable Framework for Off-policy Unsupervised Vision Domain Transfer*. We base the implementation on vision-based imitation learning for path tracking task in carla. In this repo, we will see how an imitation learning agent can be transfered to some drastically different visual domains. 
 
 ## Prerequisites
@@ -59,7 +59,7 @@ of your Carla simulator:
 You can also create your own visual domain by adding a dictionary in `config/domain_config.yaml` in the following format:
 
 ```
-DOMAIN6 [The dmain reference used by il_TCADT_trainer.py command line]:
+DOMAIN6 [The dmain reference used by il_SCAL_trainer.py command line]:
   name: "bus stops before sunset" [The name of the domain]
   map_name: *L_TRACK_BARC6 [the name of an available map from your Carla simulation]
   weatherID: 4 [the weather id for Carla]
@@ -75,29 +75,29 @@ Follow the [HPIPM installation guide](https://github.com/giaf/hpipm) to set up t
 ## Running the Experiments
 Due to the hyper-parameter inrobustness of adverarial learning families, we highly recommend any interested future researchers to carefully tune the learning rates for actors and discriminators:
 - Configure the model hyperparameters in:
-  - `config/VisionCAD.yaml` (for TCADT actor and discriminator)
+  - `config/VisionCAD.yaml` (for SCAL actor and discriminator)
 - When running experiment with Carla, we recommend boosting the carla server with the low-quality command for better reliability:
   ```sh
   ./CarlaUE4.sh -RenderOffScreen -quality-level=Low
   ```
 
 ### Running Specific Experiments
-Please run the file `il_TCADT_trainer.py` to conduct the visual-domain transfer experiment for vision-based end-to-end imitation learning. The default exper is an PID controller.
+Please run the file `il_SCAL_trainer.py` to conduct the visual-domain transfer experiment for vision-based end-to-end imitation learning. The default exper is an PID controller.
 
 #### Example Command Lines
-Listed below are some command line examples for calling `il_TCADT_trainer.py`
-- Use `DOMAIN4 DOMAIN5` as source domains. Use `demo1` as pretrained agent and transfer it to `DOMAIN11` while using `state_curvature` as the discriminative information. Follow the the distribution `naive_random` to collect the target domain buffer. When the domain transfer is done, save the model with name `TCADT1`.
+Listed below are some command line examples for calling `il_SCAL_trainer.py`
+- Use `DOMAIN4 DOMAIN5` as source domains. Use `demo1` as pretrained agent and transfer it to `DOMAIN11` while using `state_curvature` as the discriminative information. Follow the the distribution `naive_random` to collect the target domain buffer. When the domain transfer is done, save the model with name `SCAL1`.
 ```
-python il_TCADT_trainer.py --source_domains DOMAIN4 DOMAIN5 --target_domains DOMAIN11 -p demo1 -d state_curvature -ts naive_random -m TCADT1
+python il_SCAL_trainer.py --source_domains DOMAIN4 DOMAIN5 --target_domains DOMAIN11 -p demo1 -d state_curvature -ts naive_random -m SCAL1
 ```
 
-- Use `DOMAIN1 DOMAIN2` as source domains. Use `demo1` as pretrained agent and transfer it to `DOMAIN11` while using the default discriminative information. Follow the the distribution `naive_random` to collect the target domain buffer with a size of 248. When the domain transfer is done, save the model with name `TCADT1`.
+- Use `DOMAIN1 DOMAIN2` as source domains. Use `demo1` as pretrained agent and transfer it to `DOMAIN11` while using the default discriminative information. Follow the the distribution `naive_random` to collect the target domain buffer with a size of 248. When the domain transfer is done, save the model with name `SCAL1`.
 ```
-python il_TCADT_trainer.py --source_domains DOMAIN1 DOMAIN2 --target_domains DOMAIN11 -p demo1 -t 248  -ts naive_random -m TCADT1
+python il_SCAL_trainer.py --source_domains DOMAIN1 DOMAIN2 --target_domains DOMAIN11 -p demo1 -t 248  -ts naive_random -m SCAL1
 ```
 
 #### Siginificant Arguments
-Listed below are some significant arguments that can be passed in as command line for `il_TCADT_trainer.py`
+Listed below are some significant arguments that can be passed in as command line for `il_SCAL_trainer.py`
 
 - **`--source_domains` (`-sd`)**  
   A list of source-domain names from which the agent can access *unrestricted* amounts of expert demonstrations and training data. These domains are assumed to be well-understood, fully supervised, and serve as the foundation for pretraining or multi-source domain generalization.
@@ -146,10 +146,10 @@ One example:
 ```
 python il_NR_trainer.py -td DOMAIN2 DOMAIN7 -m demo3
 ```
-Note that the name of the pretrained agent can be directly passed in as `--pretrain_agent` `-pt` argument for `il_TCADT_trainer.py`. 
+Note that the name of the pretrained agent can be directly passed in as `--pretrain_agent` `-pt` argument for `il_SCAL_trainer.py`. 
 
 ### Additional Help
 For a full list of available command-line arguments, run:
 ```
-python il_TCADT_trainer.py --help
+python il_SCAL_trainer.py --help
 ```
