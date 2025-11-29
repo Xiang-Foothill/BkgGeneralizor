@@ -452,6 +452,11 @@ class BarcEnv(gym.Env):
                 'camera': camera,
             })
         return ob
+    
+    def get_rgb(self):
+        camera, semantics = self.camera_bridge.query_rgb(self.sim_state)
+        return camera
+        
 
     def _get_reward(self) -> float:
         ds = self.sim_state.p.s - self.last_state.p.s

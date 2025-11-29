@@ -176,13 +176,14 @@ def load_source_buffer(agent_path):
 
     return source_buffer
 
-def load_raw_data(data_path = 'graphs/raw_data/OPE_raw_data_only_x_tran.npz'):
+def load_raw_data(data_path = 'graphs/raw_data/OPE_raw_data.npz'):
     loaded = np.load(data_path, allow_pickle=True)
     data_dict = {key: loaded[key].item() for key  in loaded.files}
     return data_dict
 
 if __name__ == '__main__':
-    eval_data = correlation_test()
+    # eval_data = correlation_test()
+    eval_data = load_raw_data()
     pul.plot_OPE_eval(data = eval_data, kl_thresholds=[1.0, 2.0], variance_type="error_bar")
     # train_agents()
     

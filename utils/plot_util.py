@@ -538,7 +538,7 @@ def plot_OPE_eval(
     variance_type: str = "ellipse",    # {'ellipse','error_bar'}
     ellipse_conf: float = 0.68,        # used when variance_type='ellipse'
     kl_thresholds: Sequence[float] = (0.33, 0.66),  # [low_mid, mid_high] on x-axis (KL)
-    figsize=(11, 5),
+    figsize=(15, 10),
     savepath: Optional[str] = None,
 ):
     """
@@ -624,10 +624,6 @@ def plot_OPE_eval(
 
     # --- plotting ---
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize)
-    # Shade KL regions on both axes + capture legend handles once
-    region_handles = _shade_kl_regions(ax1, xmin, xmax, kl_thresholds)
-
-    _shade_kl_regions(ax2, xmin, xmax, kl_thresholds)
 
     # ---------- Plot 1: Imitation loss vs KL ----------
     if variance_type == "ellipse":
@@ -643,9 +639,9 @@ def plot_OPE_eval(
 
     ax1.set_xlim(xmin, xmax)
     # ax1.set_xlabel("Average KL divergence estimation") # no need to have xlabel here
-    yl_label = {"mse":"Average imitation loss",
-                "rmse":"Average imitation loss",
-                "mae":"Average imitation loss"}[loss]
+    yl_label = {"mse":"Imitation loss",
+                "rmse":"Imitation loss",
+                "mae":"Imitation loss"}[loss]
     ax1.set_ylabel(yl_label)
     ax1.grid(True, alpha=0.3)
     _add_quad_fit(ax1, x_kl_mean, y_loss_mean)
@@ -663,25 +659,10 @@ def plot_OPE_eval(
                      fmt='x', capsize=2.0, linestyle='none', ecolor=error_color, color=point_color, zorder=2, markersize = 6.0, elinewidth=0.8)
 
     ax2.set_xlim(xmin, xmax)
-    ax2.set_xlabel("Average KL divergence estimation")
-    ax2.set_ylabel("Average trajectory length")
+    ax2.set_xlabel("KL divergence estimation")
+    ax2.set_ylabel("Trajectory length")
     ax2.grid(True, alpha=0.3)
     _add_quad_fit(ax2, x_kl_mean, y_len_mean)
-
-    # -------- Single, shared legend for KL bands --------
-    fig.legend(handles=region_handles, loc = 'center right', ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.04))
-
-    # --- single, shared legend for KL bands ---
-    fig_legend = fig.legend(
-        handles=region_handles,
-        loc='upper center',
-        ncol=3,
-        frameon=False,
-        bbox_to_anchor=(0.5, 1.02)  # slightly above the axes
-    )
-
-    # reserve top margin so legend isn't clipped
-    # fig.tight_layout(rect=[0, 0, 1, 0.92])   # <- key line
     
     if savepath:
         fig.savefig(savepath, dpi=200)
