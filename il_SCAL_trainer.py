@@ -764,8 +764,79 @@ class IL_Trainer_CARLA_VisionAdversarialAdaptationAC():
         plt.show()
         return fig, axes
 
+    def visualize_distributions(self, distributions=('naive_random',
+                                                 'first_4m_random',
+                                                 'middle_3m_random')):
+        """
+        Collect independent data buffers based on the passed-in distributions.
+        For each collected data buffer, create a subplot visualizing the density
+        of visited states inside the track.
+        """
+        # 1) Collect data buffers
+        demo_buffers = {}
+        for distribution in distributions:
+            demo_buffers[distribution] = data_util.EfficientReplayBuffer(
+                maxsize=4000,
+                lazy_init=True
+            )
+
+        for distribution in distributions:
+            logger.debug(f"Collecting data for {distribution}")
+            self.sample_distribution = distribution
+            # you already had this line:
+            self.random_sample(
+                domain=domains["DOMAIN11"],
+                max_traj_len=2048,
+                buffer=demo_buffers[distribution]
+            )
+
+        # 2) Get track object using your API
+        get_trak = getattr(self.env, "get_trak", None)
+        track_obj = get_trak() if callable(get_trak) else self.env.get_track()
+
+        # 3) Set up subplots
+        n = len(distributions)
+        fig, axes = plt.subplots(1, n, figsize=(5 * n, 5), squeeze=False)
+        axes = axes[0]  # flatten 1 x n
+
+        # 4) For each distribution, extract (x, y) and plot density over the track
+        for ax, dist_name in zip(axes, distributions):
+            buffer = demo_buffers[dist_name]
+
+            # ---- extract states from buffer ----
+            # Assumes: buffer[i] -> dict with key "state", and state[0], state[1] = x, y
+            xs = []
+            ys = []
+            for i in range(len(buffer)):
+                transition = buffer[i]          # may need to adapt to your API
+                state = transition["gps"]     # e.g., shape (state_dim,)
+                xs.append(state[0])             # x position
+                ys.append(state[1])             # y position
+
+            xs = np.array(xs)
+            ys = np.array(ys)
+
+            # ---- plot track as background ----
+            track_obj.plot_map(ax)
+
+            # ---- overlay density of samples ----
+            # You can tweak bins/cmap as you like
+            if len(xs) > 0:
+                h = ax.hist2d(xs, ys, bins=50, density=True,
+                            alpha=0.8)  # semi-transparent heatmap
+                # Optional: add a colorbar per subplot
+                fig.colorbar(h[3], ax=ax, fraction=0.046, pad=0.04)
+
+            ax.set_aspect('equal')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            ax.grid(True, linestyle=':', linewidth=0.5, alpha=0.5)
+
+        plt.tight_layout()
+        plt.show()
+            
     def main(self, n_epochs: int):
-        self.training_loop(n_epochs=n_epochs)
+        self.visualize_distributions()
 
 if __name__ == '__main__':
     import argparse
